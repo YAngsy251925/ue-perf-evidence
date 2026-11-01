@@ -1,0 +1,10 @@
+root = true
+
+# Text encoding policy: docs/PLAN.md section 7.4 (enforced by tools/check_text.py)
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+
+[*.{bat,cmd}]
+end_of_line = crlf

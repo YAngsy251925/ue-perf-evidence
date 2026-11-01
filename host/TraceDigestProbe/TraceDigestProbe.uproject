@@ -1,0 +1,9 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.8",
+	"Category": "",
+	"Description": "Probe B2: editor-module + commandlet linking TraceServices on a binary engine",
+	"Modules": [
+		{ "Name": "TraceDigestProbe", "Type": "Runtime", "LoadingPhase": "Default" }
+	]
+}

@@ -1,0 +1,10 @@
+# Text is UTF-8 without BOM (docs/PLAN.md 7.4, checked by tools/check_text.py).
+# Line endings are normalized to LF in the repo; batch files are checked out with CRLF for cmd.exe.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.utrace binary
+*.uasset binary
+*.umap binary
+*.png binary

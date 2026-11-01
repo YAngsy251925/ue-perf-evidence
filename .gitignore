@@ -1,0 +1,19 @@
+# UE host project build output
+host/*/Binaries/
+host/*/Intermediate/
+host/*/Saved/
+host/*/DerivedDataCache/
+host/*/.vs/
+host/*/*.sln
+
+# editor-generated defaults (Android File Server block with a per-location random token);
+# start tracking it when the host needs real engine config (M6: MemReport TYPE sections)
+host/*/Config/DefaultEngine.ini
+
+# capture runs and analysis output (raw traces are large; golden traces are tracked separately in M1.7)
+runs/
+*.utrace
+
+# python
+__pycache__/
+*.pyc
