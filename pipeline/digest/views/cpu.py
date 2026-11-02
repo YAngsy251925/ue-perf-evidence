@@ -10,11 +10,12 @@
 digest v1 的结构（结论先行、等待类单列、省略说明、下钻指针）在 M1.5 实现。
 """
 import argparse
-import csv
 import json
 import os
 import sys
 from collections import defaultdict
+
+from pipeline.extract import uecsv
 
 OUT_JSON = "perf_digest.json"
 OUT_MD = "perf_digest.md"
@@ -23,22 +24,21 @@ TOP_N = 15
 
 def load_rows(src: str):
     rows = []
-    with open(src, newline="", encoding="utf-8-sig") as f:
-        for r in csv.DictReader(f):
-            try:
-                rows.append({
-                    "name": r["Name"],
-                    "count": int(float(r["Count"] or 0)),
-                    "incl": float(r["Incl"] or 0),
-                    "excl": float(r["Excl"] or 0),
-                    "imax": float(r["I.Max"] or 0),
-                    "iavg": float(r["I.Avg"] or 0),
-                    "imed": float(r["I.Med"] or 0),
-                    "emax": float(r["E.Max"] or 0),
-                    "eavg": float(r["E.Avg"] or 0),
-                })
-            except Exception:
-                continue
+    for r in uecsv.read_dicts(src):  # P10：统一读取纪律
+        try:
+            rows.append({
+                "name": r["Name"],
+                "count": int(float(r["Count"] or 0)),
+                "incl": float(r["Incl"] or 0),
+                "excl": float(r["Excl"] or 0),
+                "imax": float(r["I.Max"] or 0),
+                "iavg": float(r["I.Avg"] or 0),
+                "imed": float(r["I.Med"] or 0),
+                "emax": float(r["E.Max"] or 0),
+                "eavg": float(r["E.Avg"] or 0),
+            })
+        except Exception:
+            continue
     return rows
 
 

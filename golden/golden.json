@@ -1,0 +1,1430 @@
+{
+ "diffs": {
+  "example_vs_d3d12": {
+   "capability": "comparable",
+   "new_in_b_total": 162,
+   "note": "每组 n=1，未做重复测量；本报告只给数值，不下“变快 / 变慢”结论（R9 显著性判定在 M3.3 接入）",
+   "only_in_a_total": 70,
+   "sides": {
+    "a": {
+     "bridge_effective": false,
+     "rhi": null,
+     "rhi_source": "trace",
+     "rhi_state": "real",
+     "run_id": "example",
+     "source_csv": "stats_GameThread_window.csv",
+     "stats_window": "steady",
+     "thread_frames": {
+      "game": 0,
+      "render": 481
+     },
+     "timers": 101,
+     "top1": {
+      "name": "FViewport_Draw",
+      "self_s": 0.094
+     },
+     "total_self_s": 2.369,
+     "wait_total": {
+      "count": 8806,
+      "self_pct": 81.86,
+      "self_s": 1.939
+     },
+     "window": [
+      10.150069,
+      12.5228266
+     ]
+    },
+    "b": {
+     "bridge_effective": true,
+     "rhi": "D3D12",
+     "rhi_source": "log",
+     "rhi_state": "real",
+     "run_id": "d3d12",
+     "source_csv": "stats_GameThread_window.csv",
+     "stats_window": "steady",
+     "thread_frames": {
+      "game": 676,
+      "render": 676
+     },
+     "timers": 192,
+     "top1": {
+      "name": "RenderGraphExecute",
+      "self_s": 10.077
+     },
+     "total_self_s": 25.863,
+     "wait_total": {
+      "count": 4675,
+      "self_pct": 38.63,
+      "self_s": 9.991
+     },
+     "window": [
+      37.5862363,
+      48.9070719
+     ]
+    }
+   },
+   "top_delta_first": {
+    "a_pct": 0.0,
+    "a_s": 0.0,
+    "b_pct": 38.97,
+    "b_s": 10.077,
+    "calls_a": 0,
+    "calls_b": 2704,
+    "delta_s": 10.077,
+    "name": "RenderGraphExecute"
+   },
+   "top_delta_names": [
+    "RenderGraphExecute",
+    "TemporalSuperResolution(sg.AntiAliasingQuality=%d%s) %dx%d -> %dx%d",
+    "Frame",
+    "SceneRender",
+    "FXSystemPreRender",
+    "Scene",
+    "UpdateCoreCsvStats_BeginFrame",
+    "Bloom",
+    "ScreenSpace",
+    "FEngineLoop",
+    "STAT_FCsvProfiler_EndFrame_Stop",
+    "EndDrawingViewport",
+    "PostProcessing",
+    "FViewport_Draw",
+    "MotionBlur"
+   ],
+   "wait": {
+    "a": {
+     "count": 8806,
+     "self_pct": 81.86,
+     "self_s": 1.939
+    },
+    "b": {
+     "count": 4675,
+     "self_pct": 38.63,
+     "self_s": 9.991
+    },
+    "delta_s": 8.052,
+    "rows": [
+     {
+      "a_pct": 0.0,
+      "a_s": 0.0,
+      "b_pct": 38.24,
+      "b_s": 9.89,
+      "calls_a": 0,
+      "calls_b": 675,
+      "delta_s": 9.89,
+      "name": "Game thread idle time"
+     },
+     {
+      "a_pct": 78.4,
+      "a_s": 1.857,
+      "b_pct": 0.0,
+      "b_s": 0.0,
+      "calls_a": 480,
+      "calls_b": 0,
+      "delta_s": -1.857,
+      "name": "GameThreadWaitForTask"
+     },
+     {
+      "a_pct": 1.69,
+      "a_s": 0.04,
+      "b_pct": 0.37,
+      "b_s": 0.096,
+      "calls_a": 479,
+      "calls_b": 676,
+      "delta_s": 0.056,
+      "name": "WaitForTasks"
+     },
+     {
+      "a_pct": 1.58,
+      "a_s": 0.037,
+      "b_pct": 0.0,
+      "b_s": 0.0,
+      "calls_a": 3840,
+      "calls_b": 0,
+      "delta_s": -0.037,
+      "name": "WaitUntilTasksComplete"
+     },
+     {
+      "a_pct": 0.0,
+      "a_s": 0.0,
+      "b_pct": 0.02,
+      "b_s": 0.006,
+      "calls_a": 0,
+      "calls_b": 2649,
+      "delta_s": 0.006,
+      "name": "FWaitingQueue_Unpark_SignalWaitingThread"
+     },
+     {
+      "a_pct": 0.2,
+      "a_s": 0.005,
+      "b_pct": 0.0,
+      "b_s": 0.0,
+      "calls_a": 3046,
+      "calls_b": 0,
+      "delta_s": -0.005,
+      "name": "ProcessThreadUntilIdle"
+     },
+     {
+      "a_pct": 0.0,
+      "a_s": 0.0,
+      "b_pct": 0.0,
+      "b_s": 0.0,
+      "calls_a": 0,
+      "calls_b": 675,
+      "delta_s": 0.0,
+      "name": "Game thread tick wait time"
+     },
+     {
+      "a_pct": 0.0,
+      "a_s": 0.0,
+      "b_pct": 0.0,
+      "b_s": 0.0,
+      "calls_a": 961,
+      "calls_b": 0,
+      "delta_s": 0.0,
+      "name": "Tasks::Wait"
+     }
+    ]
+   },
+   "warnings": [
+    "[a] no engine log: command line, build configuration and RHI name are unknown",
+    "[a] rhi name unknown: no engine log; real RHI inferred from rendering frames in the trace",
+    "[a] no game frames in the trace: frame track and Frame scopes are both empty (R4; the frame_provider fallback arrives in M4.2)",
+    "[b] dropped 1 non-finite frame(s) from the game frame_track (unfinished at trace end; R13)"
+   ]
+  }
+ },
+ "digests": {
+  "b2_smoke": {
+   "capability": "not_measurable",
+   "conclusion": {
+    "confidence": "none",
+    "text": "capability: not_measurable —— nullrhi run: smoke only, no performance conclusions (PLAN R11)；不输出任何性能结论"
+   },
+   "rhi_state": "null",
+   "stats": null,
+   "warnings": [
+    "dropped 1 non-finite frame(s) from the game frame_track (unfinished at trace end; R13)"
+   ]
+  },
+  "d3d12": {
+   "capability": "measurable",
+   "conclusion": {
+    "confidence": "moderate",
+    "text": "GT 有 39.89% 的时间在等待或空转；瓶颈可能不在 GT 自身，结合等待对象与 RT / GPU 侧进一步定位"
+   },
+   "rhi_state": "real",
+   "stats": {
+    "by_prefix": [
+     {
+      "calls": 2704,
+      "prefix": "RenderGraphExecute",
+      "self_pct": 40.26,
+      "self_s": 10.077,
+      "timers": 1
+     },
+     {
+      "calls": 1352,
+      "prefix": "TemporalSuperResolution(sg",
+      "self_pct": 5.45,
+      "self_s": 1.363,
+      "timers": 1
+     },
+     {
+      "calls": 2030,
+      "prefix": "Frame",
+      "self_pct": 4.76,
+      "self_s": 1.191,
+      "timers": 1
+     },
+     {
+      "calls": 1353,
+      "prefix": "SceneRender",
+      "self_pct": 3.1,
+      "self_s": 0.776,
+      "timers": 1
+     },
+     {
+      "calls": 1352,
+      "prefix": "FXSystemPreRender",
+      "self_pct": 1.84,
+      "self_s": 0.461,
+      "timers": 1
+     },
+     {
+      "calls": 1352,
+      "prefix": "Scene",
+      "self_pct": 1.01,
+      "self_s": 0.254,
+      "timers": 1
+     },
+     {
+      "calls": 240,
+      "prefix": "UpdateCoreCsvStats",
+      "self_pct": 0.53,
+      "self_s": 0.132,
+      "timers": 1
+     },
+     {
+      "calls": 676,
+      "prefix": "Bloom",
+      "self_pct": 0.44,
+      "self_s": 0.109,
+      "timers": 1
+     },
+     {
+      "calls": 1352,
+      "prefix": "ScreenSpace",
+      "self_pct": 0.36,
+      "self_s": 0.09,
+      "timers": 1
+     },
+     {
+      "calls": 679,
+      "prefix": "STAT",
+      "self_pct": 0.28,
+      "self_s": 0.07,
+      "timers": 2
+     },
+     {
+      "calls": 676,
+      "prefix": "EndDrawingViewport",
+      "self_pct": 0.26,
+      "self_s": 0.066,
+      "timers": 1
+     },
+     {
+      "calls": 1352,
+      "prefix": "PostProcessing",
+      "self_pct": 0.24,
+      "self_s": 0.059,
+      "timers": 1
+     }
+    ],
+    "omitted": {
+     "self_pct": 1.07,
+     "timers": 30
+    },
+    "timers": 48,
+    "top_by_self_time": [
+     {
+      "avg_ms": 3.727,
+      "count": 2704,
+      "incl_s": 12.651,
+      "max_ms": 68.45,
+      "name": "RenderGraphExecute",
+      "self_pct": 40.26,
+      "self_s": 10.077,
+      "spike_ratio": 18.4
+     },
+     {
+      "avg_ms": 1.008,
+      "count": 1352,
+      "incl_s": 1.363,
+      "max_ms": 3.681,
+      "name": "TemporalSuperResolution(sg.AntiAliasingQuality=%d%s) %dx%d -> %dx%d",
+      "self_pct": 5.45,
+      "self_s": 1.363,
+      "spike_ratio": 3.7
+     },
+     {
+      "avg_ms": 0.587,
+      "count": 2030,
+      "incl_s": 26.001,
+      "max_ms": 65.094,
+      "name": "Frame",
+      "self_pct": 4.76,
+      "self_s": 1.191,
+      "spike_ratio": 110.9
+     },
+     {
+      "avg_ms": 0.574,
+      "count": 1353,
+      "incl_s": 3.799,
+      "max_ms": 2.94,
+      "name": "SceneRender",
+      "self_pct": 3.1,
+      "self_s": 0.776,
+      "spike_ratio": 5.1
+     },
+     {
+      "avg_ms": 0.341,
+      "count": 1352,
+      "incl_s": 0.462,
+      "max_ms": 1.436,
+      "name": "FXSystemPreRender",
+      "self_pct": 1.84,
+      "self_s": 0.461,
+      "spike_ratio": 4.2
+     },
+     {
+      "avg_ms": 0.188,
+      "count": 1352,
+      "incl_s": 2.562,
+      "max_ms": 1.101,
+      "name": "Scene",
+      "self_pct": 1.01,
+      "self_s": 0.254,
+      "spike_ratio": 5.9
+     },
+     {
+      "avg_ms": 0.549,
+      "count": 240,
+      "incl_s": 0.132,
+      "max_ms": 0.731,
+      "name": "UpdateCoreCsvStats_BeginFrame",
+      "self_pct": 0.53,
+      "self_s": 0.132,
+      "spike_ratio": 1.3
+     },
+     {
+      "avg_ms": 0.161,
+      "count": 676,
+      "incl_s": 0.109,
+      "max_ms": 0.666,
+      "name": "Bloom",
+      "self_pct": 0.44,
+      "self_s": 0.109,
+      "spike_ratio": 4.1
+     },
+     {
+      "avg_ms": 0.067,
+      "count": 1352,
+      "incl_s": 0.09,
+      "max_ms": 0.172,
+      "name": "ScreenSpace",
+      "self_pct": 0.36,
+      "self_s": 0.09,
+      "spike_ratio": 2.6
+     },
+     {
+      "avg_ms": 22.872,
+      "count": 3,
+      "incl_s": 0.069,
+      "max_ms": 68.606,
+      "name": "STAT_FCsvProfiler_EndFrame_Stop",
+      "self_pct": 0.27,
+      "self_s": 0.069,
+      "spike_ratio": 3.0
+     },
+     {
+      "avg_ms": 0.098,
+      "count": 676,
+      "incl_s": 0.066,
+      "max_ms": 0.926,
+      "name": "EndDrawingViewport",
+      "self_pct": 0.26,
+      "self_s": 0.066,
+      "spike_ratio": 9.5
+     },
+     {
+      "avg_ms": 0.044,
+      "count": 1352,
+      "incl_s": 1.621,
+      "max_ms": 0.647,
+      "name": "PostProcessing",
+      "self_pct": 0.24,
+      "self_s": 0.059,
+      "spike_ratio": 14.7
+     },
+     {
+      "avg_ms": 0.074,
+      "count": 676,
+      "incl_s": 0.075,
+      "max_ms": 0.164,
+      "name": "BeginRenderingViewFamily",
+      "self_pct": 0.2,
+      "self_s": 0.05,
+      "spike_ratio": 2.2
+     },
+     {
+      "avg_ms": 0.066,
+      "count": 676,
+      "incl_s": 0.058,
+      "max_ms": 0.619,
+      "name": "MotionBlur",
+      "self_pct": 0.18,
+      "self_s": 0.044,
+      "spike_ratio": 9.4
+     },
+     {
+      "avg_ms": 0.055,
+      "count": 676,
+      "incl_s": 0.227,
+      "max_ms": 0.17,
+      "name": "FViewport_Draw",
+      "self_pct": 0.15,
+      "self_s": 0.037,
+      "spike_ratio": 3.1
+     }
+    ],
+    "total_self_s": 25.033,
+    "wait_total": {
+     "count": 2026,
+     "self_pct": 39.89,
+     "self_s": 9.986
+    },
+    "window": "steady"
+   },
+   "warnings": [
+    "dropped 1 non-finite frame(s) from the game frame_track (unfinished at trace end; R13)"
+   ]
+  },
+  "example": {
+   "capability": "measurable",
+   "conclusion": {
+    "confidence": "clear",
+    "text": "GT 大部分时间在等待或空转（等待类合计 82.26%）；瓶颈不在 GT 自身，下一步检查被等待的任务与同步对象，以及 RT / GPU 侧"
+   },
+   "rhi_state": "real",
+   "stats": {
+    "by_prefix": [
+     {
+      "calls": 480,
+      "prefix": "FViewport",
+      "self_pct": 4.0,
+      "self_s": 0.094,
+      "timers": 1
+     },
+     {
+      "calls": 482,
+      "prefix": "FEngineLoop",
+      "self_pct": 3.87,
+      "self_s": 0.091,
+      "timers": 1
+     },
+     {
+      "calls": 1440,
+      "prefix": "UWorld",
+      "self_pct": 2.03,
+      "self_s": 0.048,
+      "timers": 2
+     },
+     {
+      "calls": 3360,
+      "prefix": "Slate",
+      "self_pct": 1.78,
+      "self_s": 0.042,
+      "timers": 7
+     },
+     {
+      "calls": 960,
+      "prefix": "USkeletalMeshComponent",
+      "self_pct": 1.12,
+      "self_s": 0.026,
+      "timers": 2
+     },
+     {
+      "calls": 3840,
+      "prefix": "USkinnedMeshComponent",
+      "self_pct": 0.59,
+      "self_s": 0.014,
+      "timers": 2
+     },
+     {
+      "calls": 480,
+      "prefix": "FStreamingManagerCollection",
+      "self_pct": 0.54,
+      "self_s": 0.013,
+      "timers": 1
+     },
+     {
+      "calls": 480,
+      "prefix": "QAPlayerController",
+      "self_pct": 0.48,
+      "self_s": 0.011,
+      "timers": 1
+     },
+     {
+      "calls": 4320,
+      "prefix": "SK",
+      "self_pct": 0.42,
+      "self_s": 0.01,
+      "timers": 2
+     },
+     {
+      "calls": 480,
+      "prefix": "BeginRenderingViewFamily",
+      "self_pct": 0.43,
+      "self_s": 0.01,
+      "timers": 1
+     },
+     {
+      "calls": 481,
+      "prefix": "WinPumpMessages",
+      "self_pct": 0.35,
+      "self_s": 0.008,
+      "timers": 1
+     },
+     {
+      "calls": 480,
+      "prefix": "UCharacterMovementComponent",
+      "self_pct": 0.32,
+      "self_s": 0.007,
+      "timers": 1
+     }
+    ],
+    "omitted": {
+     "self_pct": 2.51,
+     "timers": 31
+    },
+    "timers": 50,
+    "top_by_self_time": [
+     {
+      "avg_ms": 0.196,
+      "count": 480,
+      "incl_s": 0.106,
+      "max_ms": 0.575,
+      "name": "FViewport_Draw",
+      "self_pct": 4.0,
+      "self_s": 0.094,
+      "spike_ratio": 2.9
+     },
+     {
+      "avg_ms": 0.189,
+      "count": 482,
+      "incl_s": 2.369,
+      "max_ms": 0.479,
+      "name": "FEngineLoop",
+      "self_pct": 3.87,
+      "self_s": 0.091,
+      "spike_ratio": 2.5
+     },
+     {
+      "avg_ms": 0.089,
+      "count": 480,
+      "incl_s": 0.217,
+      "max_ms": 0.223,
+      "name": "UWorld_Tick",
+      "self_pct": 1.81,
+      "self_s": 0.043,
+      "spike_ratio": 2.5
+     },
+     {
+      "avg_ms": 0.054,
+      "count": 480,
+      "incl_s": 0.028,
+      "max_ms": 0.154,
+      "name": "USkeletalMeshComponent_CompleteParallelAnimationEvaluation",
+      "self_pct": 1.1,
+      "self_s": 0.026,
+      "spike_ratio": 2.8
+     },
+     {
+      "avg_ms": 0.028,
+      "count": 480,
+      "incl_s": 0.013,
+      "max_ms": 0.233,
+      "name": "Slate::TickPlatform",
+      "self_pct": 0.56,
+      "self_s": 0.013,
+      "spike_ratio": 8.4
+     },
+     {
+      "avg_ms": 0.027,
+      "count": 480,
+      "incl_s": 0.015,
+      "max_ms": 0.068,
+      "name": "FStreamingManagerCollection::UpdateResourceStreaming",
+      "self_pct": 0.54,
+      "self_s": 0.013,
+      "spike_ratio": 2.5
+     },
+     {
+      "avg_ms": 0.007,
+      "count": 1920,
+      "incl_s": 0.033,
+      "max_ms": 0.04,
+      "name": "USkinnedMeshComponent_TickComponent",
+      "self_pct": 0.54,
+      "self_s": 0.013,
+      "spike_ratio": 6.0
+     },
+     {
+      "avg_ms": 0.023,
+      "count": 480,
+      "incl_s": 0.011,
+      "max_ms": 0.048,
+      "name": "QAPlayerController",
+      "self_pct": 0.48,
+      "self_s": 0.011,
+      "spike_ratio": 2.1
+     },
+     {
+      "avg_ms": 0.021,
+      "count": 480,
+      "incl_s": 0.011,
+      "max_ms": 0.121,
+      "name": "BeginRenderingViewFamily",
+      "self_pct": 0.43,
+      "self_s": 0.01,
+      "spike_ratio": 5.7
+     },
+     {
+      "avg_ms": 0.021,
+      "count": 480,
+      "incl_s": 0.02,
+      "max_ms": 0.054,
+      "name": "Slate_PaintSlowPath",
+      "self_pct": 0.43,
+      "self_s": 0.01,
+      "spike_ratio": 2.6
+     },
+     {
+      "avg_ms": 0.017,
+      "count": 481,
+      "incl_s": 0.008,
+      "max_ms": 5.516,
+      "name": "WinPumpMessages",
+      "self_pct": 0.35,
+      "self_s": 0.008,
+      "spike_ratio": 320.7
+     },
+     {
+      "avg_ms": 0.015,
+      "count": 480,
+      "incl_s": 0.007,
+      "max_ms": 0.036,
+      "name": "UCharacterMovementComponent_TickComponent",
+      "self_pct": 0.32,
+      "self_s": 0.007,
+      "spike_ratio": 2.3
+     },
+     {
+      "avg_ms": 0.015,
+      "count": 480,
+      "incl_s": 0.036,
+      "max_ms": 0.036,
+      "name": "Slate::DrawWindows",
+      "self_pct": 0.31,
+      "self_s": 0.007,
+      "spike_ratio": 2.3
+     },
+     {
+      "avg_ms": 0.002,
+      "count": 2880,
+      "incl_s": 0.015,
+      "max_ms": 0.022,
+      "name": "SK_Rifle",
+      "self_pct": 0.24,
+      "self_s": 0.006,
+      "spike_ratio": 11.1
+     },
+     {
+      "avg_ms": 0.012,
+      "count": 480,
+      "incl_s": 0.018,
+      "max_ms": 0.112,
+      "name": "QAPawn_AnimBP_C",
+      "self_pct": 0.24,
+      "self_s": 0.006,
+      "spike_ratio": 9.6
+     }
+    ],
+    "total_self_s": 2.357,
+    "wait_total": {
+     "count": 7845,
+     "self_pct": 82.26,
+     "self_s": 1.939
+    },
+    "window": "steady"
+   },
+   "warnings": [
+    "no engine log: command line, build configuration and RHI name are unknown",
+    "rhi name unknown: no engine log; real RHI inferred from rendering frames in the trace",
+    "no game frames in the trace: frame track and Frame scopes are both empty (R4; the frame_provider fallback arrives in M4.2)"
+   ]
+  }
+ },
+ "runs": {
+  "b2_smoke": {
+   "capabilities": {
+    "memreport": true,
+    "snapshothitches": true,
+    "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
+    "stats": true
+   },
+   "category": "caliber",
+   "engine": {
+    "build": "++UE5+Release-5.8-CL-56702186",
+    "build_config": "Development",
+    "feature_level": null,
+    "platform": "WindowsEditor",
+    "rhi": null,
+    "rhi_evidence": "-nullrhi",
+    "rhi_source": "command_line",
+    "rhi_state": "null",
+    "version": "5.8.2-56702186+++UE5+Release-5.8"
+   },
+   "frame_semantics": {
+    "consistency": {
+     "game_rows": 9203,
+     "max_delta": 2,
+     "note": "not evaluated: no render frames",
+     "ok": null,
+     "render_rows": 0,
+     "rows_delta": null,
+     "window_frames_delta": null
+    },
+    "game": {
+     "frames": 9202,
+     "nonfinite_dropped": 1,
+     "overlapping_frames": 0,
+     "rows": 9203,
+     "source": "frame_track",
+     "stats": null,
+     "stats_withheld": "not measurable: nullrhi run: smoke only, no performance conclusions (PLAN R11)",
+     "threads": [
+      "Game Frames"
+     ],
+     "timer": "Game Frame N",
+     "track_index": {
+      "duplicates": 0,
+      "first": 0,
+      "gaps": 0,
+      "last": 9202
+     },
+     "window_frames": 9142
+    },
+    "percentile_method": "nearest_rank",
+    "render": {
+     "frames": 0,
+     "nonfinite_dropped": 0,
+     "overlapping_frames": 0,
+     "rows": 0,
+     "source": "none",
+     "stats": null,
+     "stats_withheld": "no render frames (expected for a nullrhi run)",
+     "threads": [],
+     "timer": null,
+     "track_index": null,
+     "window_frames": 0
+    }
+   },
+   "frames_seen": {
+    "game_frame_track": 9203,
+    "gt_frame_scopes": 9203,
+    "rendering_frame_track": 0,
+    "rt_frame_scopes": 0
+   },
+   "log_first_timestamp_utc": "2026.11.01-11.01.25:452",
+   "map": "/Engine/Maps/Entry",
+   "measurable": false,
+   "measurable_reason": "nullrhi run: smoke only, no performance conclusions (PLAN R11)",
+   "mode": "game",
+   "pending": [
+    "frame_semantics.gpu (M4.0)",
+    "profile / conditions (M2.1)",
+    "hitch (M2.3)",
+    "retention (M2.6)",
+    "session (M3.0)",
+    "presentmon (M5.3)",
+    "mapping (M5.4)",
+    "excluded (M6.1)"
+   ],
+   "trace": {
+    "bridge_evidence": [
+     "FrameTime",
+     "GameEngine Tick",
+     "World Tick Time"
+    ],
+    "channels_requested": [
+     "cpu",
+     "frame",
+     "file"
+    ],
+    "statnamedevents_effective": true,
+    "statnamedevents_requested": true,
+    "timer_count": 4423
+   },
+   "warnings": [
+    "dropped 1 non-finite frame(s) from the game frame_track (unfinished at trace end; R13)"
+   ],
+   "window_basis": {
+    "frames_steady": 9142,
+    "frames_total": 9202,
+    "frames_warmup": 60,
+    "nonfinite_dropped": 1,
+    "overlapping_frames": 0,
+    "reference": {
+     "side": "game",
+     "source": "frame_track",
+     "threads": [
+      "Game Frames"
+     ],
+     "timer": "Game Frame N"
+    },
+    "stats_window": "steady",
+    "trace_end": {
+     "clamped_to_last_frame": true,
+     "log_bounds": [
+      17.915,
+      17.925
+     ],
+     "log_text": "17.92s",
+     "seconds": 17.9211576,
+     "source": "insights_log"
+    },
+    "warmup_frames_requested": 60
+   },
+   "windows": {
+    "frames": [
+     13.7229055,
+     17.9211576
+    ],
+    "shutdown": [
+     17.9211576,
+     17.9211576
+    ],
+    "startup": [
+     0.0,
+     13.7229055
+    ],
+    "steady": [
+     13.7928404,
+     17.9211576
+    ],
+    "warmup": [
+     13.7229055,
+     13.7928404
+    ]
+   }
+  },
+  "c_hitch": {
+   "capabilities": {
+    "memreport": true,
+    "snapshothitches": true,
+    "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
+    "stats": true
+   },
+   "category": "caliber",
+   "engine": {
+    "build": "++UE5+Release-5.8-CL-56702186",
+    "build_config": "Development",
+    "feature_level": null,
+    "platform": "WindowsEditor",
+    "rhi": null,
+    "rhi_evidence": "-nullrhi",
+    "rhi_source": "command_line",
+    "rhi_state": "null",
+    "version": "5.8.2-56702186+++UE5+Release-5.8"
+   },
+   "frame_semantics": {
+    "consistency": {
+     "game_rows": 16201,
+     "max_delta": 2,
+     "note": "not evaluated: no render frames",
+     "ok": null,
+     "render_rows": 0,
+     "rows_delta": null,
+     "window_frames_delta": null
+    },
+    "game": {
+     "frames": 16200,
+     "nonfinite_dropped": 1,
+     "overlapping_frames": 0,
+     "rows": 16201,
+     "source": "frame_track",
+     "stats": null,
+     "stats_withheld": "not measurable: nullrhi run: smoke only, no performance conclusions (PLAN R11)",
+     "threads": [
+      "Game Frames"
+     ],
+     "timer": "Game Frame N",
+     "track_index": {
+      "duplicates": 0,
+      "first": 0,
+      "gaps": 0,
+      "last": 16200
+     },
+     "window_frames": 16140
+    },
+    "percentile_method": "nearest_rank",
+    "render": {
+     "frames": 0,
+     "nonfinite_dropped": 0,
+     "overlapping_frames": 0,
+     "rows": 0,
+     "source": "none",
+     "stats": null,
+     "stats_withheld": "no render frames (expected for a nullrhi run)",
+     "threads": [],
+     "timer": null,
+     "track_index": null,
+     "window_frames": 0
+    }
+   },
+   "frames_seen": {
+    "game_frame_track": 16201,
+    "gt_frame_scopes": 16201,
+    "rendering_frame_track": 0,
+    "rt_frame_scopes": 0
+   },
+   "log_first_timestamp_utc": "2026.11.01-08.42.27:220",
+   "map": "/Engine/Maps/Entry",
+   "measurable": false,
+   "measurable_reason": "nullrhi run: smoke only, no performance conclusions (PLAN R11)",
+   "mode": "game",
+   "pending": [
+    "frame_semantics.gpu (M4.0)",
+    "profile / conditions (M2.1)",
+    "hitch (M2.3)",
+    "retention (M2.6)",
+    "session (M3.0)",
+    "presentmon (M5.3)",
+    "mapping (M5.4)",
+    "excluded (M6.1)"
+   ],
+   "trace": {
+    "bridge_evidence": [
+     "FrameTime",
+     "GameEngine Tick",
+     "World Tick Time"
+    ],
+    "channels_requested": [
+     "cpu",
+     "frame",
+     "bookmark",
+     "file"
+    ],
+    "statnamedevents_effective": true,
+    "statnamedevents_requested": true,
+    "timer_count": 4448
+   },
+   "warnings": [
+    "dropped 1 non-finite frame(s) from the game frame_track (unfinished at trace end; R13)"
+   ],
+   "window_basis": {
+    "frames_steady": 16140,
+    "frames_total": 16200,
+    "frames_warmup": 60,
+    "nonfinite_dropped": 1,
+    "overlapping_frames": 0,
+    "reference": {
+     "side": "game",
+     "source": "frame_track",
+     "threads": [
+      "Game Frames"
+     ],
+     "timer": "Game Frame N"
+    },
+    "stats_window": "steady",
+    "trace_end": {
+     "clamped_to_last_frame": false,
+     "log_bounds": [
+      76.55,
+      76.65
+     ],
+     "log_text": "1m 16.6s",
+     "seconds": 76.6,
+     "source": "insights_log"
+    },
+    "warmup_frames_requested": 60
+   },
+   "windows": {
+    "frames": [
+     67.6561962,
+     76.5996818
+    ],
+    "shutdown": [
+     76.5996818,
+     76.6
+    ],
+    "startup": [
+     0.0,
+     67.6561962
+    ],
+    "steady": [
+     68.2529591,
+     76.5996818
+    ],
+    "warmup": [
+     67.6561962,
+     68.2529591
+    ]
+   }
+  },
+  "d3d12": {
+   "capabilities": {
+    "memreport": true,
+    "snapshothitches": true,
+    "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
+    "stats": true
+   },
+   "category": "shape",
+   "engine": {
+    "build": "++UE5+Release-5.8-CL-56702186",
+    "build_config": "Development",
+    "feature_level": "SM5",
+    "platform": "WindowsEditor",
+    "rhi": "D3D12",
+    "rhi_evidence": "LogRHI: Using Default RHI: D3D12",
+    "rhi_source": "log",
+    "rhi_state": "real",
+    "version": "5.8.2-56702186+++UE5+Release-5.8"
+   },
+   "frame_semantics": {
+    "consistency": {
+     "game_rows": 737,
+     "max_delta": 2,
+     "note": null,
+     "ok": true,
+     "render_rows": 736,
+     "rows_delta": 1,
+     "window_frames_delta": 0
+    },
+    "game": {
+     "frames": 736,
+     "nonfinite_dropped": 1,
+     "overlapping_frames": 0,
+     "rows": 737,
+     "source": "frame_track",
+     "stats": {
+      "contiguous": true,
+      "duration_ms": {
+       "max": 85.1714,
+       "mean": 16.7361,
+       "n": 676,
+       "p50": 16.6561,
+       "p90": 16.8755,
+       "p95": 16.9676,
+       "p99": 17.212
+      },
+      "gap_ms_p50": 0.0102,
+      "interval_ms": {
+       "max": 85.1865,
+       "mean": 16.7471,
+       "n": 675,
+       "p50": 16.668,
+       "p90": 16.8862,
+       "p95": 16.9777,
+       "p99": 17.2273
+      },
+      "max_frame": {
+       "start": 41.5695942,
+       "track_index": 299
+      },
+      "window": "steady"
+     },
+     "stats_withheld": null,
+     "threads": [
+      "Game Frames"
+     ],
+     "timer": "Game Frame N",
+     "track_index": {
+      "duplicates": 0,
+      "first": 0,
+      "gaps": 0,
+      "last": 736
+     },
+     "window_frames": 676
+    },
+    "percentile_method": "nearest_rank",
+    "render": {
+     "frames": 736,
+     "nonfinite_dropped": 0,
+     "overlapping_frames": 0,
+     "rows": 736,
+     "source": "frame_track",
+     "stats": {
+      "contiguous": false,
+      "duration_ms": {
+       "max": 70.348,
+       "mean": 3.1047,
+       "n": 676,
+       "p50": 2.9897,
+       "p90": 3.2838,
+       "p95": 3.4483,
+       "p99": 4.0983
+      },
+      "gap_ms_p50": 13.68,
+      "interval_ms": {
+       "max": 70.3539,
+       "mean": 16.747,
+       "n": 675,
+       "p50": 16.6669,
+       "p90": 16.6799,
+       "p95": 16.6842,
+       "p99": 16.6997
+      },
+      "max_frame": {
+       "start": 41.5844853,
+       "track_index": 299
+      },
+      "window": "steady"
+     },
+     "stats_withheld": null,
+     "threads": [
+      "Rendering Frames"
+     ],
+     "timer": "Rendering Frame N",
+     "track_index": {
+      "duplicates": 0,
+      "first": 0,
+      "gaps": 0,
+      "last": 735
+     },
+     "window_frames": 676
+    }
+   },
+   "frames_seen": {
+    "game_frame_track": 737,
+    "gt_frame_scopes": 737,
+    "rendering_frame_track": 736,
+    "rt_frame_scopes": 736
+   },
+   "log_first_timestamp_utc": "2026.11.01-10.26.15:907",
+   "map": "/Engine/Maps/Entry",
+   "measurable": true,
+   "measurable_reason": "real RHI (D3D12)",
+   "mode": "game",
+   "pending": [
+    "frame_semantics.gpu (M4.0)",
+    "profile / conditions (M2.1)",
+    "hitch (M2.3)",
+    "retention (M2.6)",
+    "session (M3.0)",
+    "presentmon (M5.3)",
+    "mapping (M5.4)",
+    "excluded (M6.1)"
+   ],
+   "trace": {
+    "bridge_evidence": [
+     "FrameTime",
+     "GameEngine Tick",
+     "World Tick Time"
+    ],
+    "channels_requested": [
+     "cpu",
+     "frame",
+     "gpu",
+     "bookmark",
+     "file"
+    ],
+    "statnamedevents_effective": true,
+    "statnamedevents_requested": true,
+    "timer_count": 5216
+   },
+   "warnings": [
+    "dropped 1 non-finite frame(s) from the game frame_track (unfinished at trace end; R13)"
+   ],
+   "window_basis": {
+    "frames_steady": 676,
+    "frames_total": 736,
+    "frames_warmup": 60,
+    "nonfinite_dropped": 1,
+    "overlapping_frames": 0,
+    "reference": {
+     "side": "game",
+     "source": "frame_track",
+     "threads": [
+      "Game Frames"
+     ],
+     "timer": "Game Frame N"
+    },
+    "stats_window": "steady",
+    "trace_end": {
+     "clamped_to_last_frame": false,
+     "log_bounds": [
+      48.905,
+      48.915
+     ],
+     "log_text": "48.91s",
+     "seconds": 48.91,
+     "source": "insights_log"
+    },
+    "warmup_frames_requested": 60
+   },
+   "windows": {
+    "frames": [
+     36.470822,
+     48.9070719
+    ],
+    "shutdown": [
+     48.9070719,
+     48.91
+    ],
+    "startup": [
+     0.0,
+     36.470822
+    ],
+    "steady": [
+     37.5862363,
+     48.9070719
+    ],
+    "warmup": [
+     36.470822,
+     37.5862363
+    ]
+   }
+  },
+  "example": {
+   "capabilities": {
+    "memreport": null,
+    "snapshothitches": null,
+    "source": "unknown: no build configuration in the engine log",
+    "stats": null
+   },
+   "category": "caliber",
+   "engine": {
+    "build": null,
+    "build_config": null,
+    "feature_level": null,
+    "platform": null,
+    "rhi": null,
+    "rhi_evidence": "game_track=0 rendering_track=0 gt_scopes=0 rt_scopes=541",
+    "rhi_source": "trace",
+    "rhi_state": "real",
+    "version": null
+   },
+   "frame_semantics": {
+    "consistency": {
+     "game_rows": 0,
+     "max_delta": 2,
+     "note": "not evaluated: no game frames",
+     "ok": null,
+     "render_rows": 541,
+     "rows_delta": null,
+     "window_frames_delta": null
+    },
+    "game": {
+     "frames": 0,
+     "nonfinite_dropped": 0,
+     "overlapping_frames": 0,
+     "rows": 0,
+     "source": "none",
+     "stats": null,
+     "stats_withheld": "no game frames",
+     "threads": [],
+     "timer": null,
+     "track_index": null,
+     "window_frames": 0
+    },
+    "percentile_method": "nearest_rank",
+    "render": {
+     "frames": 541,
+     "nonfinite_dropped": 0,
+     "overlapping_frames": 0,
+     "rows": 541,
+     "source": "frame_scope",
+     "stats": {
+      "contiguous": true,
+      "duration_ms": {
+       "max": 8.3451,
+       "mean": 4.9117,
+       "n": 481,
+       "p50": 4.8726,
+       "p90": 5.5419,
+       "p95": 5.7152,
+       "p99": 6.2252
+      },
+      "gap_ms_p50": 0.02,
+      "interval_ms": {
+       "max": 8.3988,
+       "mean": 4.9316,
+       "n": 480,
+       "p50": 4.8938,
+       "p90": 5.5636,
+       "p95": 5.7344,
+       "p99": 6.2506
+      },
+      "max_frame": {
+       "start": 11.1361939,
+       "track_index": null
+      },
+      "window": "steady"
+     },
+     "stats_withheld": null,
+     "threads": [
+      "RenderThread 1"
+     ],
+     "timer": "Frame",
+     "track_index": null,
+     "window_frames": 481
+    }
+   },
+   "frames_seen": {
+    "game_frame_track": 0,
+    "gt_frame_scopes": 0,
+    "rendering_frame_track": 0,
+    "rt_frame_scopes": 541
+   },
+   "log_first_timestamp_utc": null,
+   "map": null,
+   "measurable": true,
+   "measurable_reason": "real RHI (name unknown)",
+   "mode": null,
+   "pending": [
+    "frame_semantics.gpu (M4.0)",
+    "profile / conditions (M2.1)",
+    "hitch (M2.3)",
+    "retention (M2.6)",
+    "session (M3.0)",
+    "presentmon (M5.3)",
+    "mapping (M5.4)",
+    "excluded (M6.1)"
+   ],
+   "trace": {
+    "bridge_evidence": [],
+    "channels_requested": null,
+    "statnamedevents_effective": false,
+    "statnamedevents_requested": null,
+    "timer_count": 10462
+   },
+   "warnings": [
+    "no engine log: command line, build configuration and RHI name are unknown",
+    "rhi name unknown: no engine log; real RHI inferred from rendering frames in the trace",
+    "no game frames in the trace: frame track and Frame scopes are both empty (R4; the frame_provider fallback arrives in M4.2)"
+   ],
+   "window_basis": {
+    "frames_steady": 481,
+    "frames_total": 541,
+    "frames_warmup": 60,
+    "nonfinite_dropped": 0,
+    "overlapping_frames": 0,
+    "reference": {
+     "side": "render",
+     "source": "frame_scope",
+     "threads": [
+      "RenderThread 1"
+     ],
+     "timer": "Frame"
+    },
+    "stats_window": "steady",
+    "trace_end": {
+     "clamped_to_last_frame": false,
+     "log_bounds": [
+      15.475,
+      15.485
+     ],
+     "log_text": "15.48s",
+     "seconds": 15.48,
+     "source": "insights_log"
+    },
+    "warmup_frames_requested": 60
+   },
+   "windows": {
+    "frames": [
+     9.7491746,
+     12.5228266
+    ],
+    "shutdown": [
+     12.5228266,
+     15.48
+    ],
+    "startup": [
+     0.0,
+     9.7491746
+    ],
+    "steady": [
+     10.150069,
+     12.5228266
+    ],
+    "warmup": [
+     9.7491746,
+     10.150069
+    ]
+   }
+  }
+ },
+ "schema": "perf-golden/0"
+}

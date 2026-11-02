@@ -5,12 +5,19 @@
   python perfctl.py export base   <trace> --out DIR [--threads GameThread,RenderThread 0] [--top 50]
   python perfctl.py export window <trace> --out DIR --start S --end E [--threads GameThread]
   python perfctl.py export probe  <trace> --out DIR [--gpu]
-  python perfctl.py digest cpu    <stats.csv> --out DIR
+  python perfctl.py digest cpu    <run_dir> --out DIR [--thread GameThread]      # run 级 digest v1（§5.3）
+  python perfctl.py digest cpu    <stats.csv> --out DIR                          # v0：单 CSV 数字核心
+  python perfctl.py diff cpu      <run_a> <run_b> --out DIR [--trace-a F] [--trace-b F]  # v0（M1.6）
+  python perfctl.py manifest      <run_dir> [--log FILE] [--extract DIR] [--trace FILE] [--out FILE]
 
-所有命令都必须用 --out 指定输出目录（PLAN P7）。UE 根目录：export --ue-root 或环境变量 UE_ROOT。
+export / digest 必须用 --out 指定输出目录（PLAN P7）；manifest 写在 run 目录里（或 --out）。
+UE 根目录：--ue-root 或环境变量 UE_ROOT。
 """
+import os
 import sys
 
+from pipeline.caliber import manifest
+from pipeline.digest import diff, run_digest
 from pipeline.digest.views import cpu
 from pipeline.extract import insights_export
 
@@ -27,9 +34,32 @@ def main(argv=None) -> int:
         return insights_export.main(rest)
     if group == "digest":
         if rest[:1] != ["cpu"]:
-            print("usage: perfctl digest cpu <stats.csv> --out DIR")
+            print("usage: perfctl digest cpu <run_dir|stats.csv> --out DIR")
             return 2
-        return cpu.main(rest[1:])
+        rest = rest[1:]
+        # 第一个非选项参数是输入：目录 → run 级 v1；CSV 文件 → v0 数字核心
+        target = next((a for a in rest if not a.startswith("-") and not a.startswith("--")), None)
+        if target is None:
+            print("usage: perfctl digest cpu <run_dir|stats.csv> --out DIR")
+            return 2
+        if os.path.isdir(target):
+            return run_digest.main(rest)
+        return cpu.main(rest)
+    if group == "diff":
+        if rest[:1] != ["cpu"]:
+            print("usage: perfctl diff cpu <run_a> <run_b> --out DIR")
+            return 2
+        rest = rest[1:]
+        pos = [a for a in rest if not a.startswith("-")]
+        if len(pos) < 2:
+            print("usage: perfctl diff cpu <run_a> <run_b> --out DIR")
+            return 2
+        if not all(os.path.isdir(p) for p in pos[:2]):
+            print("usage: perfctl diff cpu <run_a> <run_b> --out DIR（两个参数都必须是 run 目录）")
+            return 2
+        return diff.main(rest)
+    if group == "manifest":
+        return manifest.main(rest)
     print(f"unknown command: {group}\n{__doc__}")
     return 2
 

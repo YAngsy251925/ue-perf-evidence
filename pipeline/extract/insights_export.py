@@ -47,13 +47,16 @@ def run_insights(trace: str, outdir: str, commands, ue_root=None, timeout=1800) 
     with open(rsp, "w", encoding="utf-8") as f:
         f.write("\n".join(commands) + "\n")
     # 注意 -ExecOnAnalysisCompleteCmd=@=path 这一写法：等号后是 @= + rsp 路径
+    log_path = os.path.join(outdir, "insights.log")
+    if os.path.isfile(log_path):
+        os.remove(log_path)  # 清掉旧日志，避免 Insights 启动时把它轮转成 insights-backup-*.log 堆积
     args = [
         f'"{insights_exe(ue_root)}"',
         f'-OpenTraceFile="{trace}"',
         "-AutoQuit",
         "-NoUI",
         f"-ExecOnAnalysisCompleteCmd=@={rsp}",
-        f'-ABSLOG="{os.path.join(outdir, "insights.log")}"',
+        f'-ABSLOG="{log_path}"',
         "-log",
     ]
     subprocess.run(" ".join(args), timeout=timeout)
