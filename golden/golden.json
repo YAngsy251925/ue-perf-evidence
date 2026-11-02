@@ -738,6 +738,7 @@
  "runs": {
   "b2_smoke": {
    "capabilities": {
+    "csv_profiler": null,
     "memreport": true,
     "snapshothitches": true,
     "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
@@ -813,7 +814,6 @@
    "mode": "game",
    "pending": [
     "frame_semantics.gpu (M4.0)",
-    "profile / conditions (M2.1)",
     "hitch (M2.3)",
     "retention (M2.6)",
     "session (M3.0)",
@@ -891,6 +891,7 @@
   },
   "c_hitch": {
    "capabilities": {
+    "csv_profiler": null,
     "memreport": true,
     "snapshothitches": true,
     "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
@@ -966,7 +967,6 @@
    "mode": "game",
    "pending": [
     "frame_semantics.gpu (M4.0)",
-    "profile / conditions (M2.1)",
     "hitch (M2.3)",
     "retention (M2.6)",
     "session (M3.0)",
@@ -1045,6 +1045,7 @@
   },
   "d3d12": {
    "capabilities": {
+    "csv_profiler": null,
     "memreport": true,
     "snapshothitches": true,
     "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
@@ -1179,7 +1180,6 @@
    "mode": "game",
    "pending": [
     "frame_semantics.gpu (M4.0)",
-    "profile / conditions (M2.1)",
     "hitch (M2.3)",
     "retention (M2.6)",
     "session (M3.0)",
@@ -1259,6 +1259,7 @@
   },
   "example": {
    "capabilities": {
+    "csv_profiler": null,
     "memreport": null,
     "snapshothitches": null,
     "source": "unknown: no build configuration in the engine log",
@@ -1355,7 +1356,6 @@
    "mode": null,
    "pending": [
     "frame_semantics.gpu (M4.0)",
-    "profile / conditions (M2.1)",
     "hitch (M2.3)",
     "retention (M2.6)",
     "session (M3.0)",

@@ -1,0 +1,17 @@
+{
+  "schema": "perf-profile/0",
+  "name": "smoke",
+  "class": "smoke",
+  "description": "链路冒烟：nullrhi，只验证 采集 → 导出 → manifest 这条链路连通；性能数字一律不可用（R11）",
+  "map": "/Engine/Maps/Entry",
+  "rhi": "null",
+  "window": null,
+  "flags": ["-unattended", "-nosplash", "-nosound"],
+  "statnamedevents": true,
+  "trace": {"channels": ["cpu", "frame", "bookmark"], "tail_mb": 64, "tail_mb_provisional": true},
+  "cvars": {},
+  "set_res_cvar": false,
+  "exec_cmds": [],
+  "conditions": {"warmup_frames": 60, "duration_s": 10},
+  "stop": {"mode": "harness_duration", "startup_budget_s": 300, "settle_s": 5}
+}

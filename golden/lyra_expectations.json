@@ -1,0 +1,22 @@
+{
+  "schema": "perf-golden-lyra/0",
+  "kind": "property",
+  "note": "Lyra 性能类 golden：对 lyra_hitch_01 实测。断言的是不变量（新 run 的帧号必然不同），不是逐字节相等。",
+  "memreport_hitch": {
+    "root_cause": "HandleMemReportDeferredCommand",
+    "min_ms": 2500.0,
+    "note": "Lyra 对象量下 GC + Serialize 实测 3.1 秒（Entry 图 271ms）；≥2.5s 为预期量级",
+    "snapshot_required": true,
+    "screenshot_required": true
+  },
+  "run_shape": {
+    "rhi_state": "real",
+    "min_hitches_with_memreport": 1,
+    "max_hitches_total_note": "上限不设：自然 hitch 数量随玩法与加载状态波动（首跑 138 次，含 16 秒级前端进对局加载）",
+    "q3": "game/render 行数差 ≤2"
+  },
+  "bitrate": {
+    "avg_mb_s_observed": 1.31,
+    "note": "256MB tail ≈ 195s 历史（Lyra 实测平均）；Entry 图 profile 64MB 保持不变"
+  }
+}

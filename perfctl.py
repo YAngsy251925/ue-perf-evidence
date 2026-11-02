@@ -7,8 +7,11 @@
   python perfctl.py export probe  <trace> --out DIR [--gpu]
   python perfctl.py digest cpu    <run_dir> --out DIR [--thread GameThread]      # run 级 digest v1（§5.3）
   python perfctl.py digest cpu    <stats.csv> --out DIR                          # v0：单 CSV 数字核心
+  python perfctl.py digest hitch  <run_dir> --out DIR                            # hitch 视图（M2.3/M2.4）
   python perfctl.py diff cpu      <run_a> <run_b> --out DIR [--trace-a F] [--trace-b F]  # v0（M1.6）
   python perfctl.py manifest      <run_dir> [--log FILE] [--extract DIR] [--trace FILE] [--out FILE]
+  python perfctl.py profile list | show <name> | prepare <name> <run_dir> [--map M]       # 采集 profile（M2.1）
+  python perfctl.py capture <profile> <run_dir> [--map M]                                  # 一条命令采集（M2.2）
 
 export / digest 必须用 --out 指定输出目录（PLAN P7）；manifest 写在 run 目录里（或 --out）。
 UE 根目录：--ue-root 或环境变量 UE_ROOT。
@@ -16,9 +19,10 @@ UE 根目录：--ue-root 或环境变量 UE_ROOT。
 import os
 import sys
 
+from pipeline.capture import capture, profile
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
-from pipeline.digest.views import cpu
+from pipeline.digest.views import cpu, hitch
 from pipeline.extract import insights_export
 
 
@@ -33,6 +37,8 @@ def main(argv=None) -> int:
     if group == "export":
         return insights_export.main(rest)
     if group == "digest":
+        if rest[:1] == ["hitch"]:
+            return hitch.main(rest[1:])
         if rest[:1] != ["cpu"]:
             print("usage: perfctl digest cpu <run_dir|stats.csv> --out DIR")
             return 2
@@ -60,6 +66,13 @@ def main(argv=None) -> int:
         return diff.main(rest)
     if group == "manifest":
         return manifest.main(rest)
+    if group == "profile":
+        return profile.main(rest)
+    if group == "capture":
+        if len([a for a in rest if not a.startswith("-")]) < 2:
+            print("usage: perfctl capture <profile> <run_dir> [--map M]")
+            return 2
+        return capture.main(rest)
     print(f"unknown command: {group}\n{__doc__}")
     return 2
 

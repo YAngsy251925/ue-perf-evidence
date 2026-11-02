@@ -17,6 +17,7 @@ import os
 import re
 import sys
 
+from pipeline.caliber import conditions
 from pipeline.caliber.bridge_detect import detect_bridge
 from pipeline.caliber.engine_log import parse_engine_log
 from pipeline.caliber.frame_probe import frames_seen, load_frame_series, pick_reference
@@ -28,10 +29,10 @@ from pipeline.extract import insights_export, uecsv
 
 SCHEMA = "perf-manifest/0"
 PROBE_FILES = ("timers.csv", "frame_tracks.csv", "frame_scopes.csv")
+COVERAGE_FILE = "coverage.json"  # perfctl capture 写的 coverage 证据（trace 书签时间）
 # §5.2 里尚未实现的字段及其里程碑；字段缺席不等于“没有数据”
 PENDING = [
     "frame_semantics.gpu (M4.0)",
-    "profile / conditions (M2.1)",
     "hitch (M2.3)",
     "retention (M2.6)",
     "session (M3.0)",
@@ -76,13 +77,66 @@ def display_path(path, run_dir):
     if not path:
         return None
     path, run_dir = os.path.abspath(path), os.path.abspath(run_dir)
-    if os.path.commonpath([path, run_dir]) == run_dir:
+    try:
+        inside = os.path.commonpath([path, run_dir]) == run_dir
+    except ValueError:  # 不同盘符（如 run 目录在 C:、实验数据在 D:）时 commonpath 会抛异常
+        inside = False
+    if inside:
         return os.path.relpath(path, run_dir).replace("\\", "/")
     return path.replace("\\", "/")
 
 
-def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=DEFAULT_WARMUP_FRAMES) -> dict:
+def load_capture_snapshot(run_dir):
+    """perfctl profile prepare 写在 run 目录里的声明快照；手工 run 没有它。"""
+    path = os.path.join(run_dir, conditions.SNAPSHOT_FILE)
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_coverage(run_dir):
+    """perfctl capture 写的 coverage 证据（PerfEvidence 书签的 trace 时间）；没有则 None。"""
+    path = os.path.join(run_dir, COVERAGE_FILE)
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    cov = data.get("coverage")
+    if not cov or cov.get("start") is None or cov.get("end") is None:
+        return None
+    return cov
+
+
+def apply_coverage(windows, basis, coverage, snapshot, warnings):
+    """P15 双窗口隔离：coverage_probe = CSV 开启段（含写文件尖峰）；
+    stats = 稳态窗口去掉 coverage 后剩下的干净前段。CSV 没盖住稳态起点时 stats 才存在；
+    否则降级：stats 保持 steady 并写 warning（_digest 侧按 R11 机制拒绝数字）。
+    返回 capabilities 里的 csv_profiler 值。"""
+    if coverage is None:
+        return None
+    cov_start, cov_end = float(coverage["start"]), float(coverage["end"])
+    windows["coverage_probe"] = [cov_start, cov_end]
+    steady = windows.get("steady")
+    if steady and cov_start > steady[0]:
+        windows["stats"] = [steady[0], min(steady[1], cov_start)]
+        basis["stats_window"] = "stats"
+        basis["stats_window_derivation"] = ("steady minus coverage_probe (P15); the write spike lives "
+                                            "inside coverage_probe")
+        return True
+    warnings.append("coverage_probe starts at or before the steady window: no CSV-free stats window "
+                    "remains (P15 fallback: treat the run as probe-covered)")
+    basis["stats_window_derivation"] = "steady kept (coverage_probe covers it; P15 fallback)"
+    return True
+
+
+def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -> dict:
+    """warmup_frames：显式值 > capture_profile.json 声明的值 > DEFAULT_WARMUP_FRAMES。"""
     warnings = []
+    snapshot = load_capture_snapshot(run_dir)
+    if warmup_frames is None:
+        declared = ((snapshot or {}).get("profile") or {}).get("conditions") or {}
+        warmup_frames = declared.get("warmup_frames", DEFAULT_WARMUP_FRAMES)
     log = parse_engine_log(log_path) if log_path and os.path.isfile(log_path) else None
     if log is None:
         warnings.append("no engine log: command line, build configuration and RHI name are unknown")
@@ -98,16 +152,27 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=DEFAULT
     win = split_windows(pick_reference(series), duration, warmup_frames)
     warnings += rhi.pop("warnings") + bridge.pop("warnings") + win["warnings"]
     measurable, reason = rhi.pop("measurable"), rhi.pop("measurable_reason")
+    coverage = load_coverage(run_dir)
+    csv_profiler = apply_coverage(win["windows"], win["basis"], coverage, snapshot, warnings)
     frame_semantics, fs_warnings = build_frame_semantics(
         series, win["windows"], win["basis"], measurable, reason, rhi["rhi_state"])
     warnings += fs_warnings
     desc = describe_command_line(cmd)
+    profile_block, conditions_block, cond_warnings = conditions.verify(
+        snapshot, log, rhi["rhi_state"], measurable, bridge["statnamedevents_effective"],
+        desc["trace_channels_requested"], win["basis"], win["windows"], (log or {}).get("build_config"),
+        coverage)
+    warnings += cond_warnings
     log = log or {}
+    if csv_profiler is not None:
+        log["csv_profiler_coverage"] = coverage
     return {
         "schema": SCHEMA,
         "run_id": os.path.basename(os.path.abspath(run_dir)),
         "measurable": measurable,
         "measurable_reason": reason,
+        "profile": profile_block,
+        "conditions": conditions_block,
         "engine": {
             "version": log.get("engine_version"),
             "build": log.get("build"),
@@ -118,7 +183,7 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=DEFAULT
         "command_line": cmd,
         "map": desc["map"],
         "mode": desc["mode"],
-        "capabilities": capabilities(log.get("build_config")),
+        "capabilities": {**capabilities(log.get("build_config")), "csv_profiler": csv_profiler},
         "trace": {
             "file": display_path(trace_path, run_dir),
             "channels_requested": desc["trace_channels_requested"],
@@ -135,6 +200,7 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=DEFAULT
             "insights_log": display_path(insights_log, run_dir) if has_insights_log else None,
         },
         "log_first_timestamp_utc": log.get("first_timestamp_utc"),
+        "coverage_probe_source": {"file": COVERAGE_FILE, **coverage} if coverage else None,
         "pending": list(PENDING),
         "warnings": warnings,
     }
@@ -153,11 +219,12 @@ def main(argv=None) -> int:
     ap.add_argument("--extract", help="probe 导出目录（默认 <run_dir>/extract）")
     ap.add_argument("--trace", help="trace 文件（默认 <run_dir>/trace.utrace）")
     ap.add_argument("--out", help="输出文件（默认 <run_dir>/manifest.json）")
-    ap.add_argument("--warmup-frames", type=int, default=DEFAULT_WARMUP_FRAMES,
-                    help="预热帧数，不进入稳态窗口（默认 %d，PLAN R3）" % DEFAULT_WARMUP_FRAMES)
+    ap.add_argument("--warmup-frames", type=int, default=None,
+                    help="预热帧数，不进入稳态窗口（默认取 capture_profile.json 的声明，再退回 %d，PLAN R3）"
+                    % DEFAULT_WARMUP_FRAMES)
     ap.add_argument("--ue-root", default=None, help="自动 probe 导出时使用的 UE 根目录")
     a = ap.parse_args(argv)
-    if a.warmup_frames < 0:
+    if a.warmup_frames is not None and a.warmup_frames < 0:
         ap.error("--warmup-frames must be >= 0")
 
     run_dir = os.path.abspath(a.run_dir)
@@ -191,14 +258,19 @@ def main(argv=None) -> int:
     print("  reference=%s frames=%d (warmup %d, steady %d, non-finite dropped %d)" % (
         "none" if ref is None else "%s %s %s" % (ref["side"], ref["source"], ",".join(ref["threads"])),
         basis["frames_total"], basis["frames_warmup"], basis["frames_steady"], basis["nonfinite_dropped"]))
-    print("  windows: startup=%s frames=%s steady=%s shutdown=%s" % (
-        fmt_window(win["startup"]), fmt_window(win["frames"]), fmt_window(win["steady"]), fmt_window(win["shutdown"])))
+    print("  windows: startup=%s frames=%s steady=%s stats=%s coverage=%s shutdown=%s" % (
+        fmt_window(win["startup"]), fmt_window(win["frames"]), fmt_window(win["steady"]),
+        fmt_window(win.get("stats")), fmt_window(win.get("coverage_probe")), fmt_window(win["shutdown"])))
     fs = manifest["frame_semantics"]
     for side in ("game", "render"):
         print("  %s" % fmt_side(side, fs[side]))
     c = fs["consistency"]
     print("  consistency(Q3): %s" % (c["note"] if c["ok"] is None else "ok=%s rows_delta=%d window_frames_delta=%d" % (
         c["ok"], c["rows_delta"], c["window_frames_delta"])))
+    if manifest["profile"]:
+        s = manifest["conditions"]["summary"]
+        print("  profile=%s (%s) conditions: verified=%d failed=%s unchecked=%s" % (
+            manifest["profile"]["name"], manifest["profile"]["class"], s["verified"], s["failed"], s["unchecked"]))
     for w in manifest["warnings"]:
         print("  warning: %s" % w)
     return 0
