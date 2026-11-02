@@ -69,6 +69,8 @@ bash harness/coexist_run.sh harness/experiments/D_realrhi_csv.bat runs/<run_id> 
 - Windows + Git Bash；Python 3，只用标准库（已在 3.11 上验证）
 - UE 5.8 安装版。根目录默认 `D:\Epic\Games\UE_5.8`，可用环境变量 `UE_ROOT` 覆盖；`export` 子命令也接受 `--ue-root`
 - A2 / B2 / C 是 nullrhi 实验，只能验证链路，性能数字不可用（PLAN R11）
+- Epic PerfreportTool（M5.2）：**不需要系统安装 .NET 10**。调用时设 `DOTNET_ROOT=<UE_ROOT>\Engine\Binaries\ThirdParty\DotNet\10.0\win-x64`，即可使用引擎自带的 10.0.7 运行时
+- PresentMon（M5.3）：2.6.0 在 `D:\dsh-output\tools\presentmon\2.6.0\PresentMon-2.6.0-x64.exe`（不进 git；sha256 `b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af`，Intel 签名）。账户需要在 Performance Log Users 组里或以管理员运行，本机账户已在组内
 
 ## 编码规范（强制）
 
