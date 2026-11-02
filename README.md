@@ -1,6 +1,6 @@
 # ue-perf-evidence
 
-安装版 UE 5.8 上、面向 AI agent 闭环的性能证据管线。完整方案见 [docs/PLAN.md](docs/PLAN.md)。
+UE 5.8 上、面向 AI agent 闭环的性能证据管线。完整方案见 [docs/PLAN.md](docs/PLAN.md)。
 
 当前进度：**M1 全部完成**（M1.1 迁入、M1.2 manifest、M1.3 窗口、M1.4 帧口径、M1.5 digest、M1.6 diff、M1.7 golden、M1.8 解析纪律）；代码未提交，待确认后一次性提交。下一步 M2.1（采集 profile）。
 
