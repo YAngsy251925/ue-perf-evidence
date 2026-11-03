@@ -126,5 +126,36 @@ class TimerStatsTest(unittest.TestCase):
         self.assertGreater(comp["worst_rel_pct"], 30.0)
 
 
+class CommandLineTest(unittest.TestCase):
+    """命令行必须用空格形态（P19：cmd 把 '=' 当分隔符），out 用绝对路径。"""
+
+    def test_space_form_and_no_equals_in_custom_args(self):
+        line = b2.build_cmdline("gpu", "D:/t/trace.utrace", "D:/o/b2_gpu.json",
+                                "D:/o/b2_gpu.log", limit=8, start=1.5, end=2.5,
+                                thread="GameThread", ue_root="D:/UE")
+        self.assertIn("-run=TraceDigestPerf", line)
+        self.assertIn("mode gpu", line)
+        self.assertIn("out \"D:/o/b2_gpu.json\"", line)
+        self.assertIn("limit 8", line)
+        self.assertIn("start 1.500000", line)
+        self.assertIn("end 2.500000", line)
+        self.assertIn("thread GameThread", line)
+        self.assertIn("-nullrhi", line)
+        # 自定义 key 不能用 key=value 形态（cmd 会拆开）
+        for token in ("mode=", "out=", "limit=", "start=", "end=", "thread="):
+            self.assertNotIn(token, line)
+
+    def test_timer_arg_is_quoted(self):
+        line = b2.build_cmdline("callers", "D:/t/trace.utrace", "D:/o/c.json", "D:/o/c.log",
+                                timer="W_LyraFrontEnd_C /Engine/T", ue_root="D:/UE")
+        self.assertIn('timer "W_LyraFrontEnd_C /Engine/T"', line)
+
+    def test_all_modes_are_listed(self):
+        for mode in ("frames", "timers", "timerstats", "callers", "gpu", "counters",
+                     "regions", "logs", "channels", "tasks", "memory", "allocations",
+                     "net", "load"):
+            self.assertIn(mode, b2.MODES)
+
+
 if __name__ == "__main__":
     unittest.main()

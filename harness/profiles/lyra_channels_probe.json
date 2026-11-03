@@ -1,0 +1,62 @@
+{
+  "schema": "perf-profile/0",
+  "name": "lyra_channels_probe",
+  "class": "measure",
+  "description": "M4.2 验证用：同样的 Lyra 前端口径，但打开 region/memory/counters/tasks/loadtime/net 通道，验证 B2 各 provider 模式",
+  "map": "/Game/System/FrontEnd/Maps/L_LyraFrontEnd",
+  "rhi": "default",
+  "window": {
+    "windowed": true,
+    "resx": 960,
+    "resy": 540
+  },
+  "flags": [
+    "-unattended",
+    "-nosplash",
+    "-nosound"
+  ],
+  "statnamedevents": true,
+  "trace": {
+    "channels": [
+      "cpu",
+      "frame",
+      "gpu",
+      "bookmark",
+      "region",
+      "memory",
+      "counters",
+      "tasks",
+      "loadtime",
+      "net"
+    ],
+    "tail_mb": 64,
+    "tail_mb_provisional": true
+  },
+  "cvars": {
+    "t.MaxFPS": "0",
+    "r.VSync": "0",
+    "r.GTSyncType": "0",
+    "t.IdleWhenNotForeground": "0"
+  },
+  "set_res_cvar": true,
+  "exec_cmds": [
+    "PerfEvidence.BusyCount 10",
+    "PerfEvidence.BusyMs 2"
+  ],
+  "csv": {
+    "coverage_start_s": 35,
+    "stop_at_s": 45,
+    "exit": "exit_after_csv"
+  },
+  "conditions": {
+    "warmup_frames": 60,
+    "duration_s": 30,
+    "camera": "static",
+    "frame_generation": "off"
+  },
+  "stop": {
+    "mode": "clean_exit",
+    "startup_budget_s": 300,
+    "exit_budget_s": 30
+  }
+}

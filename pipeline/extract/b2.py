@@ -25,8 +25,39 @@ HOST_DIR = os.path.join(REPO, "host", "TraceDigestProbe")
 DEFAULT_UE_ROOT = r"D:\Epic\Games\UE_5.8"
 
 
+MODES = ("frames", "timers", "timerstats", "callers", "gpu", "counters", "regions",
+         "logs", "channels", "tasks", "memory", "allocations", "net", "load")
+
+
+def build_cmdline(mode, trace, out_path, log_path, limit=0, start=None, end=None,
+                  thread=None, timer=None, ue_root=None):
+    """拼出引擎命令行（写进一次性 bat 的那一行）。纯函数，便于单测。
+
+    所有自定义参数用**空格形态**（P19：cmd 把 '=' 当参数分隔符）。
+    """
+    ue_root = ue_root or os.environ.get("UE_ROOT") or DEFAULT_UE_ROOT
+    exe = os.path.join(ue_root, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
+    uproject = os.path.join(HOST_DIR, "TraceDigestProbe.uproject")
+    parts = ['"%s"' % exe, '"%s"' % uproject, "-run=TraceDigestPerf",
+             "trace", '"%s"' % trace.replace("\\", "/"),
+             "mode", mode, "out", '"%s"' % out_path]
+    if limit > 0:
+        parts += ["limit", str(limit)]
+    if start is not None:
+        parts += ["start", "%.6f" % start]
+    if end is not None:
+        parts += ["end", "%.6f" % end]
+    if thread:
+        parts += ["thread", thread]
+    if timer:
+        parts += ["timer", '"%s"' % timer]
+    parts += ["-unattended", "-nosplash", "-nullrhi", "-nosound", "-stdout",
+              '-ABSLOG="%s"' % log_path]
+    return " ".join(parts)
+
+
 def run_mode(mode, trace, out_path, limit=0, ue_root=None, timeout=600,
-             start=None, end=None, thread=None):
+             start=None, end=None, thread=None, timer=None):
     """跑一次 commandlet，返回 (ok, 日志文本)。日志里的 PERF_ 行是唯一的成功标志。"""
     trace = os.path.abspath(trace)
     out_path = os.path.abspath(out_path)
@@ -34,28 +65,11 @@ def run_mode(mode, trace, out_path, limit=0, ue_root=None, timeout=600,
         return False, "trace not found: %s" % trace
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     log_path = os.path.splitext(out_path)[0] + ".log"
-    # cmd 会把 "key=value" 按 '=' 拆成两个参数，所以统一用空格形态："mode frames"。
-    # 直接写引擎命令行（不经 run_cmdlet.bat）：bat 里 %~dp0 在 call 嵌套下会指错目录，
-    # 曾导致引擎拿到 "<run 目录>/TraceDigestProbe.uproject" 直接打不开工程。
-    extra = ["mode", mode, "out", out_path]
-    if limit > 0:
-        extra += ["limit", str(limit)]
-    if start is not None:
-        extra += ["start", ("%.6f" % start)]
-    if end is not None:
-        extra += ["end", ("%.6f" % end)]
-    if thread:
-        extra += ["thread", thread]
-    ue_root = ue_root or os.environ.get("UE_ROOT") or DEFAULT_UE_ROOT
-    exe = os.path.join(ue_root, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
-    uproject = os.path.join(HOST_DIR, "TraceDigestProbe.uproject")
-    trace_arg = trace.replace("\\", "/")
+    # cmd 会把 "key=value" 按 '=' 拆成两个参数，所以统一用空格形态（P19）。
+    # 直接写引擎命令行（不经 run_cmdlet.bat）：bat 里 %~dp0 在 call 嵌套下会指错目录。
     bat = os.path.splitext(out_path)[0] + ".bat"
-    line = " ".join([
-        '"%s"' % exe, '"%s"' % uproject, "-run=TraceDigestPerf", "trace", '"%s"' % trace_arg,
-    ] + extra + [
-        "-unattended", "-nosplash", "-nullrhi", "-nosound", "-stdout", '-ABSLOG="%s"' % log_path,
-    ])
+    line = build_cmdline(mode, trace, out_path, log_path, limit, start, end,
+                         thread, timer, ue_root)
     with io.open(bat, "w", encoding="ascii", newline="\r\n") as f:
         f.write("@echo off\r\n%s\r\n" % line)
     proc = subprocess.run(["cmd", "/c", bat], capture_output=True, text=True, encoding="utf-8",
@@ -177,13 +191,14 @@ def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):  # PLAN 7.4 E4
         stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="B2 深度读取（M4.2）")
-    ap.add_argument("mode", choices=("frames", "timers", "timerstats"), help="读取模式")
+    ap.add_argument("mode", choices=MODES, help="读取模式（%s）" % ", ".join(MODES))
     ap.add_argument("trace", help="trace.utrace 路径")
     ap.add_argument("--out", required=True, help="输出目录（必填，P7）")
     ap.add_argument("--limit", type=int, default=0, help="每个列表最多输出多少条（0 = 全量）")
     ap.add_argument("--start", type=float, default=None, help="timerstats 窗口起点（秒）")
     ap.add_argument("--end", type=float, default=None, help="timerstats 窗口终点（秒）")
-    ap.add_argument("--thread", default=None, help="timerstats 的线程名（如 GameThread）")
+    ap.add_argument("--thread", default=None, help="线程名（timerstats / callers）")
+    ap.add_argument("--timer", default=None, help="callers 的目标 timer 名")
     ap.add_argument("--compare-csv", default=None, help="与 A 路导出 CSV 对账（timerstats）")
     ap.add_argument("--ue-root", default=None)
     a = ap.parse_args(argv)
@@ -192,7 +207,7 @@ def main(argv=None) -> int:
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "b2_%s.json" % a.mode)
     ok, text = run_mode(a.mode, a.trace, out_path, a.limit, a.ue_root,
-                        start=a.start, end=a.end, thread=a.thread)
+                        start=a.start, end=a.end, thread=a.thread, timer=a.timer)
     if not ok:
         print("[error] commandlet 失败（看 %s）" % os.path.splitext(out_path)[0] + ".log")
         for line in text.splitlines():
@@ -216,23 +231,30 @@ def main(argv=None) -> int:
                 return 3
         elif checks is None:
             print("[b2] 旁边没有 manifest，跳过对账")
-    else:
-        summary = summarize_timerstats(payload)
-        print("[b2] timerstats: thread=%s 窗口 %.3fs，%s 个 timer（输出 %s 行），self 合计 %.3fs（覆盖 %.2f%%）"
-              % (summary["thread"], summary["span_s"], summary["timer_count"], summary["emitted"],
-                 summary["sum_self_s"], summary["coverage_pct"] or 0.0))
-        if summary["top"]:
-            print("[b2] Top: %s" % ", ".join(str(x) for x in summary["top"][:5]))
-        if a.compare_csv:
-            comp = compare_a_route(payload, a.compare_csv)
-            print("[b2] 对账 A 路（同名项）：命中 %d 项，最大相对偏差 %.4f%%，判定 %s"
-                  % (comp["matched_n"], comp["worst_rel_pct"], "OK" if comp["ok"] else "MISMATCH"))
-            for p in comp["pairs"][:5]:
-                print("      %-28s A=%.3fs B2=%.3fs Δ=%s%%"
-                      % (p["name"][:28], p["a_self_s"], p["b_self_s"],
-                         "-" if p["diff_pct"] is None else "%+.4f" % p["diff_pct"]))
-            if not comp["ok"]:
+    elif a.mode == "timers":
+        print("[b2] timers: %s 个" % payload.get("timer_count", 0))
+        manifest = manifest_beside(a.trace)
+        want = (manifest or {}).get("trace", {}).get("timer_count")
+        if want is not None:
+            got = payload.get("timer_count")
+            print("[b2] 对账 timer_count: B2=%s A路=%s %s"
+                  % (got, want, "OK" if got == want else "MISMATCH"))
+            if got != want:
                 return 3
+    else:
+        # 其余 mode：把 commandlet 自己那行 PERF_ 摘要打出来（格式由 C++ 侧决定）
+        # 日志行形如 "[2026.11.03-...][  0]PERF_GPU queues=3 ..."，PERF_ 不在行首
+        summary_lines = []
+        for ln in text.splitlines():
+            if "PERF_" not in ln or "PERF_OUT" in ln:
+                continue
+            tail = ln.split("]")[-1].strip() if "]" in ln else ln.strip()
+            summary_lines.append(tail)
+        for ln in summary_lines[-2:]:
+            print("[b2] %s" % ln)
+        if not summary_lines:
+            print("[b2] 没有 PERF_ 摘要行，见 %s" % (os.path.splitext(out_path)[0] + ".log"))
+
     print("[ok] %s" % out_path)
     return 0
 

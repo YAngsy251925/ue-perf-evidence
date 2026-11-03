@@ -65,6 +65,14 @@ python perfctl.py diff cpu <run_a> <run_b> --out <dir> [--trace-a FILE] [--trace
 python perfctl.py diff cpu -a R1 R2 R3 R4 R5 -b S1 S2 S3 S4 S5 --out <dir>    # 组形态（M3.3）
 python perfctl.py diff cpu -a ... -b ... --out <dir> --significance-only       # 只读 manifest 的 p50，CI 门槛
 
+# B2 深度读取（M4.2）：frames / timers / timerstats / callers / gpu / counters / regions /
+# logs / channels / tasks / memory / allocations / net / load
+# 传参用空格形态（P19），--out 给绝对路径
+python perfctl.py b2 timerstats <trace.utrace> --out runs/dir --start 22.6 --end 54.9 --thread GameThread --limit 40
+python perfctl.py b2 callers    <trace.utrace> --out runs/dir --start 22.6 --end 54.9 --thread GameThread --timer Frame
+python perfctl.py b2 gpu        <trace.utrace> --out runs/dir --start 22.6 --end 54.9 --limit 10
+python perfctl.py b2 regions    <trace.utrace> --out runs/dir --start 22.6 --end 54.9 --limit 15
+
 # run 列表（M3.2，对应 §3 的 perf_runs）：先看有哪些 run、哪些可测量、稳态多长
 python perfctl.py runs [--filter m3] [--json]
 
