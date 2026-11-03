@@ -1,0 +1,18 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "PerfEvidence Host",
+	"Description": "In-process side of perf_capture for any project: CSV event pair (PerfEvidence CoverageStart / CaptureStop) for P15 clean exit, plus the reversible regression injector (PerfEvidence.BusyCount / BusyMs) used by the M3.4 closed-loop demo.",
+	"Category": "Debugging",
+	"CanContainContent": false,
+	"EnabledByDefault": true,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "PerfEvidenceHost",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

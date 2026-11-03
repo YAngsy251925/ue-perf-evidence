@@ -1,0 +1,56 @@
+{
+  "schema": "perf-profile/0",
+  "name": "lyra_measure_work",
+  "class": "measure",
+  "description": "M3.4 的 A/C 组：§7.2 固定条件 + 恒定夹具负载 PerfEvidence.BusyCount 10 / BusyMs 2。恒定负载只为把帧时间抬离 60Hz 节拍（P18），三组都有，回归只算 B 组多出来的那部分。",
+  "map": "/Game/System/FrontEnd/Maps/L_LyraFrontEnd",
+  "rhi": "default",
+  "window": {
+    "windowed": true,
+    "resx": 960,
+    "resy": 540
+  },
+  "flags": [
+    "-unattended",
+    "-nosplash",
+    "-nosound"
+  ],
+  "statnamedevents": true,
+  "trace": {
+    "channels": [
+      "cpu",
+      "frame",
+      "gpu",
+      "bookmark"
+    ],
+    "tail_mb": 64,
+    "tail_mb_provisional": true
+  },
+  "cvars": {
+    "t.MaxFPS": "0",
+    "r.VSync": "0",
+    "r.GTSyncType": "0",
+    "t.IdleWhenNotForeground": "0"
+  },
+  "set_res_cvar": true,
+  "exec_cmds": [
+    "PerfEvidence.BusyCount 10",
+    "PerfEvidence.BusyMs 2"
+  ],
+  "csv": {
+    "coverage_start_s": 35,
+    "stop_at_s": 45,
+    "exit": "exit_after_csv"
+  },
+  "conditions": {
+    "warmup_frames": 60,
+    "duration_s": 30,
+    "camera": "static",
+    "frame_generation": "off"
+  },
+  "stop": {
+    "mode": "clean_exit",
+    "startup_budget_s": 300,
+    "exit_budget_s": 30
+  }
+}
