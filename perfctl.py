@@ -14,6 +14,7 @@
   python perfctl.py capture <profile> <run_dir> [--map M]                                  # 一条命令采集（M2.2）
   python perfctl.py session-drift [--segments 6] [--duration 20]                            # M3.0 常驻会话实测
   python perfctl.py runs          [--root DIR] [--filter S] [--limit N] [--json]            # M3.2 run 列表（perf_runs）
+  python perfctl.py b2 frames|timers <trace> --out DIR [--limit N]                          # M4.2 B2 深度读取
 
 export / digest 必须用 --out 指定输出目录（PLAN P7）；manifest 写在 run 目录里（或 --out）。
 UE 根目录：--ue-root 或环境变量 UE_ROOT。
@@ -26,7 +27,7 @@ from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
 from pipeline.digest.views import cpu, hitch
 from pipeline.digest import runs
-from pipeline.extract import insights_export
+from pipeline.extract import b2, insights_export
 
 
 def main(argv=None) -> int:
@@ -80,6 +81,8 @@ def main(argv=None) -> int:
         return session.main(rest)
     if group == "runs":
         return runs.main(rest)
+    if group == "b2":
+        return b2.main(rest)
     print(f"unknown command: {group}\n{__doc__}")
     return 2
 

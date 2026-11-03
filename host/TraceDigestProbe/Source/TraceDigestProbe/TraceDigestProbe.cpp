@@ -10,6 +10,8 @@
 #include "TraceServices/Model/AnalysisSession.h"
 #include "TraceServices/Model/TimingProfiler.h"
 #include "TraceServices/Model/Bookmarks.h"
+#include "TraceServices/Model/Frames.h"
+#include "Misc/FileHelper.h"
 #endif
 #if CSV_PROFILER
 #include "ProfilingDebugging/CsvProfiler.h"
@@ -359,10 +361,8 @@ static void RunTraceDigest(const TArray<FString>& Args, UWorld*, FOutputDevice& 
 				TraceServices::ReadTimingProfilerProvider(*Session);
 			if (Timers)
 			{
-				Timers->ReadTimers([&TimerCount](const TraceServices::ITimingProfilerTimerReader& Reader)
-				{
-					TimerCount = (int32)Reader.GetTimerCount();
-				});
+				// 5.8：ReadTimers 弃用 → GetTimerReader()
+				TimerCount = (int32)Timers->GetTimerReader().GetTimerCount();
 			}
 			DurationSeconds = Session->GetDurationSeconds();
 		}
@@ -376,6 +376,29 @@ static FAutoConsoleCommandWithWorldArgsAndOutputDevice GTraceDigestCmd(
 	TEXT("TraceDigest trace=<path.utrace>  -- offline analysis via TraceServices (headless probe)"),
 	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateStatic(&RunTraceDigest));
 
+// 参数取值：既认 key=value，也认 key value。
+// 实测：命令行经引擎转发后 "mode=frames" 会变成 "mode frames"（等号被吃掉），
+// 所以只按 FParse::Value(Key+"=") 解析会静默拿到空串 —— 这里两种形态都接受。
+static FString ParseArg(const FString& Params, const TCHAR* Key)
+{
+	const FString Clean = Params.Replace(TEXT("\""), TEXT(""));
+	FString Value;
+	if (FParse::Value(*Clean, *(FString(Key) + TEXT("=")), Value))
+	{
+		return Value;
+	}
+	TArray<FString> Tokens;
+	Clean.ParseIntoArrayWS(Tokens);
+	for (int32 i = 0; i + 1 < Tokens.Num(); ++i)
+	{
+		if (Tokens[i].Equals(Key, ESearchCase::IgnoreCase))
+		{
+			return Tokens[i + 1];
+		}
+	}
+	return FString();
+}
+
 static FString ParseUnquoted(const FString& Params, const TCHAR* Key)
 {
 	// FParse::Value 要求匹配键前面是空白；bat/引擎转发会把 token 重排成 "prefix=X"（引号在键前），
@@ -386,13 +409,130 @@ static FString ParseUnquoted(const FString& Params, const TCHAR* Key)
 	return Value;
 }
 
+// ---------------------------------------------------------------- M4.2 深度读取
+// 移植自 ue-trace-mcp（Unlicense，bf73c60）的 frames / timers 两个 mode，改成 5.8 API：
+// timers 走 GetTimerReader()（ReadTimers 在 5.8 已弃用，见 docs/M4_1_API_DIFF.md A1）。
+// 输出是手写 JSON（不引 Json 模块，保持依赖最少），写 -out=<file>；不写就打到日志。
+
+static FString JsonEscape(const TCHAR* Text)
+{
+	if (!Text) { return FString(); }
+	FString Out(Text);
+	Out.ReplaceInline(TEXT("\\"), TEXT("\\\\"));
+	Out.ReplaceInline(TEXT("\""), TEXT("\\\""));
+	Out.ReplaceInline(TEXT("\n"), TEXT("\\n"));
+	Out.ReplaceInline(TEXT("\r"), TEXT("\\r"));
+	Out.ReplaceInline(TEXT("\t"), TEXT("\\t"));
+	return Out;
+}
+
+static void EmitFrames(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
+	const FString& TracePath, const FString& OutPath, int32 Limit)
+{
+	const TraceServices::IFrameProvider& Frames = TraceServices::ReadFrameProvider(Session);
+	const uint64 GameCount = Frames.GetFrameCount(TraceFrameType_Game);
+	const uint64 RenderCount = Frames.GetFrameCount(TraceFrameType_Rendering);
+	const double EndSec = Session.GetDurationSeconds();
+
+	FString Out = FString::Printf(
+		TEXT("{\"schema\":\"perf-b2-frames/0\",\"trace\":\"%s\",\"duration_ms\":%.4f,"),
+		*JsonEscape(*TracePath), EndSec * 1000.0);
+
+	auto EmitType = [&](const TCHAR* Key, ETraceFrameType Type, uint64 Count)
+	{
+		Out += FString::Printf(TEXT("\"%s\":{\"count\":%llu,\"frames\":["), Key, (unsigned long long)Count);
+		uint64 Emitted = 0;
+		Frames.EnumerateFrames(Type, 0ull, Count, [&](const TraceServices::FFrame& Frame)
+		{
+			if (Limit > 0 && Emitted >= (uint64)Limit) { return; }
+			if (Emitted > 0) { Out += TEXT(","); }
+			Out += FString::Printf(TEXT("{\"idx\":%llu,\"start_ms\":%.4f,\"end_ms\":%.4f,\"duration_ms\":%.4f}"),
+				(unsigned long long)Frame.Index, Frame.StartTime * 1000.0, Frame.EndTime * 1000.0,
+				(Frame.EndTime - Frame.StartTime) * 1000.0);
+			++Emitted;
+		});
+		Out += FString::Printf(TEXT("],\"emitted\":%llu}"), (unsigned long long)Emitted);
+	};
+
+	EmitType(TEXT("game"), TraceFrameType_Game, GameCount);
+	Out += TEXT(",");
+	EmitType(TEXT("render"), TraceFrameType_Rendering, RenderCount);
+	Out += TEXT("}");
+
+	if (!OutPath.IsEmpty())
+	{
+		if (FFileHelper::SaveStringToFile(Out, *OutPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		{
+			Ar.Logf(TEXT("PERF_OUT %s"), *OutPath);
+		}
+		else
+		{
+			Ar.Logf(TEXT("PERF_ERR write failed: %s"), *OutPath);
+		}
+	}
+	Ar.Logf(TEXT("PERF_FRAMES game=%llu render=%llu duration_ms=%.4f"),
+		(unsigned long long)GameCount, (unsigned long long)RenderCount, EndSec * 1000.0);
+}
+
+static void EmitTimers(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
+	const FString& TracePath, const FString& OutPath, int32 Limit)
+{
+	// 5.8：ReadTimingProfilerProvider 返回指针（ReadFrameProvider 才是引用）；ReadTimers 已弃用，走 GetTimerReader()
+	const TraceServices::ITimingProfilerProvider* Timing = TraceServices::ReadTimingProfilerProvider(Session);
+	if (!Timing) { Ar.Logf(TEXT("PERF_ERR no timing profiler provider")); return; }
+	const TraceServices::ITimingProfilerTimerReader& Reader = Timing->GetTimerReader();
+	const uint32 TimerCount = Reader.GetTimerCount();
+
+	FString Out = FString::Printf(
+		TEXT("{\"schema\":\"perf-b2-timers/0\",\"trace\":\"%s\",\"timer_count\":%u,\"timers\":["),
+		*JsonEscape(*TracePath), TimerCount);
+	uint32 Emitted = 0;
+	for (uint32 I = 0; I < TimerCount; ++I)
+	{
+		if (Limit > 0 && Emitted >= (uint32)Limit) { break; }
+		const TraceServices::FTimingProfilerTimer* Timer = Reader.GetTimer(I);
+		if (!Timer) { continue; }
+		if (Emitted > 0) { Out += TEXT(","); }
+		Out += FString::Printf(TEXT("{\"id\":%u,\"name\":\"%s\",\"file\":\"%s\",\"line\":%u,\"type\":%u}"),
+			Timer->Id, *JsonEscape(Timer->Name), *JsonEscape(Timer->File), Timer->Line,
+			(uint32)Timer->Type);
+		++Emitted;
+	}
+	Out += FString::Printf(TEXT("],\"emitted\":%u}"), Emitted);
+
+	if (!OutPath.IsEmpty())
+	{
+		if (FFileHelper::SaveStringToFile(Out, *OutPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		{
+			Ar.Logf(TEXT("PERF_OUT %s"), *OutPath);
+		}
+		else
+		{
+			Ar.Logf(TEXT("PERF_ERR write failed: %s"), *OutPath);
+		}
+	}
+	Ar.Logf(TEXT("PERF_TIMERS count=%u emitted=%u"), TimerCount, Emitted);
+}
+
 // TraceDigestPerf 的实现（-run=TraceDigestPerf 经 UTraceDigestPerfCommandlet 进来）。
-// 输出 trace 里以 prefix 开头的书签：PerfEvidence CoverageStart / CaptureStop 的 trace 侧证据
-//（M2.2 的 coverage 边界）。
+//   mode 为空（默认）：输出 trace 里以 prefix 开头的书签（M2.2 的 coverage 边界，capture.py 在用）
+//   mode=frames      ：帧轨道（Game / Rendering 各一条，index/start/end/duration）
+//   mode=timers      ：timer 目录（id/name/file/line/type），5.8 的 GetTimerReader 路径
+// -out=<file> 写 JSON；-limit=N 限制每条输出的条目数（0 = 全量）。
 void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 {
-	FString TracePath = ParseUnquoted(Params, TEXT("trace="));
-	FString Prefix = ParseUnquoted(Params, TEXT("prefix="));
+	FString TracePath = ParseArg(Params, TEXT("trace"));
+	FString Prefix = ParseArg(Params, TEXT("prefix"));
+	FString Mode = ParseArg(Params, TEXT("mode"));
+	FString OutPath = ParseArg(Params, TEXT("out"));
+	int32 Limit = 0;
+	{
+		const FString LimitText = ParseArg(Params, TEXT("limit"));
+		if (!LimitText.IsEmpty())
+		{
+			Limit = FCString::Atoi(*LimitText);
+		}
+	}
 	if (TracePath.IsEmpty()) { Ar.Logf(TEXT("PERF_ERR missing trace=<file>")); return; }
 
 	ITraceServicesModule& Module = FModuleManager::LoadModuleChecked<ITraceServicesModule>(TEXT("TraceServices"));
@@ -404,6 +544,20 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	if (!Session.IsValid()) { Ar.Logf(TEXT("PERF_ERR analyze failed")); return; }
 	Session->Wait();
 	TraceServices::FAnalysisSessionReadScope ReadScope(*Session);
+
+	if (Mode == TEXT("frames"))
+	{
+		EmitFrames(*Session, Ar, TracePath, OutPath, Limit);
+		Ar.Logf(TEXT("PERF_DONE"));
+		return;
+	}
+	if (Mode == TEXT("timers"))
+	{
+		EmitTimers(*Session, Ar, TracePath, OutPath, Limit);
+		Ar.Logf(TEXT("PERF_DONE"));
+		return;
+	}
+
 	const TraceServices::IBookmarkProvider& Bookmarks = TraceServices::ReadBookmarkProvider(*Session);
 	uint64 Count = Bookmarks.GetBookmarkCount();
 	Ar.Logf(TEXT("PERF_BOOKMARKS count=%llu"), (unsigned long long)Count);
