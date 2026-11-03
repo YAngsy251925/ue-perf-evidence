@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "PerfEvidence Toolset",
+	"Description": "AI-callable performance evidence tools: capture control (Trace.File/Trace.Stop) and report generation via the ue-perf-evidence pipeline (perfctl). Tools are discovered by ToolsetRegistry through meta=(AICallable).",
+	"Category": "Debugging",
+	"CanContainContent": false,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "PerfEvidenceToolset",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ToolsetRegistry",
+			"Enabled": true
+		}
+	]
+}

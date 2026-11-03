@@ -2,6 +2,9 @@
 host/*/Binaries/
 host/*/Intermediate/
 host/*/Saved/
+host/*/Plugins/*/Binaries/
+host/*/Plugins/*/Intermediate/
+host/*/Plugins/*/Saved/
 host/*/DerivedDataCache/
 host/*/.vs/
 host/*/*.sln
@@ -9,6 +12,8 @@ host/*/*.sln
 # editor-generated defaults (Android File Server block with a per-location random token);
 # start tracking it when the host needs real engine config (M6: MemReport TYPE sections)
 host/*/Config/DefaultEngine.ini
+host/*/Config/DefaultInput.ini
+host/*/Config/DefaultGame.ini
 
 # capture runs and analysis output (raw traces are large; golden traces are tracked separately in M1.7)
 runs/
