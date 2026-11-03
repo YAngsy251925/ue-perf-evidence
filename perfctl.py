@@ -12,6 +12,8 @@
   python perfctl.py manifest      <run_dir> [--log FILE] [--extract DIR] [--trace FILE] [--out FILE]
   python perfctl.py profile list | show <name> | prepare <name> <run_dir> [--map M]       # 采集 profile（M2.1）
   python perfctl.py capture <profile> <run_dir> [--map M]                                  # 一条命令采集（M2.2）
+  python perfctl.py session-drift [--segments 6] [--duration 20]                            # M3.0 常驻会话实测
+  python perfctl.py runs          [--root DIR] [--filter S] [--limit N] [--json]            # M3.2 run 列表（perf_runs）
 
 export / digest 必须用 --out 指定输出目录（PLAN P7）；manifest 写在 run 目录里（或 --out）。
 UE 根目录：--ue-root 或环境变量 UE_ROOT。
@@ -19,10 +21,11 @@ UE 根目录：--ue-root 或环境变量 UE_ROOT。
 import os
 import sys
 
-from pipeline.capture import capture, profile
+from pipeline.capture import capture, profile, session
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
 from pipeline.digest.views import cpu, hitch
+from pipeline.digest import runs
 from pipeline.extract import insights_export
 
 
@@ -73,6 +76,10 @@ def main(argv=None) -> int:
             print("usage: perfctl capture <profile> <run_dir> [--map M]")
             return 2
         return capture.main(rest)
+    if group == "session-drift":
+        return session.main(rest)
+    if group == "runs":
+        return runs.main(rest)
     print(f"unknown command: {group}\n{__doc__}")
     return 2
 
