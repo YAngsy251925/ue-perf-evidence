@@ -157,5 +157,43 @@ class CommandLineTest(unittest.TestCase):
             self.assertIn(mode, b2.MODES)
 
 
+
+
+class FrameFallbackTest(unittest.TestCase):
+    """R4 第三级：A 路没有帧轨道时，manifest 用 B2 的 IFrameProvider。"""
+
+    def test_empty_series_map_shape(self):
+        from pipeline.caliber import frame_probe
+        series = frame_probe.empty_series_map()
+        self.assertEqual(len(series), 4)
+        for key in frame_probe.SERIES_ORDER:
+            self.assertIn(key, series)
+            self.assertEqual(series[key]["frames"], [])
+        self.assertIsNone(frame_probe.pick_reference(series))
+
+    def test_b2_series_converts_ms_to_seconds(self):
+        from pipeline.caliber import frame_probe
+        payload = {"game": {"count": 3, "frames": [
+            {"idx": 0, "start_ms": 0.0, "end_ms": 16.0, "duration_ms": 16.0},
+            {"idx": 1, "start_ms": 16.0, "end_ms": 33.0, "duration_ms": 17.0},
+            {"idx": 2, "start_ms": 33.0, "end_ms": 51.0, "duration_ms": 18.0}]},
+            "render": {"count": 0, "frames": []}}
+        with tempfile.TemporaryDirectory() as d:
+            with io.open(os.path.join(d, "b2_frames.json"), "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            original = b2.run_mode
+            b2.run_mode = lambda *a, **k: (True, "PERF_DONE")
+            try:
+                series, warnings = frame_probe.b2_series("t.utrace", d)
+            finally:
+                b2.run_mode = original
+        game = series[("game", "frame_track")]
+        self.assertEqual(game["source"], frame_probe.B2_SOURCE)
+        self.assertEqual(len(game["frames"]), 3)
+        self.assertAlmostEqual(game["frames"][1][2], 0.017, places=6)
+        self.assertEqual(game["frames"][1][3], 1)
+        self.assertTrue(any("R4" in w for w in warnings))
+
+
 if __name__ == "__main__":
     unittest.main()

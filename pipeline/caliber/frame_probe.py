@@ -19,6 +19,8 @@ M1.3 用参考序列切窗口；M1.4（frame_semantics.py）在同一份数据�
   - 参考序列按 R4 的顺序选第一个非空的：游戏帧轨道、渲染帧轨道、GameThread scope、RenderThread scope
 """
 import csv
+import io
+import json
 import math
 import os
 import re
@@ -93,6 +95,55 @@ def frames_seen(series: dict) -> dict:
         "gt_frame_scopes": series[("game", "frame_scope")]["rows"],
         "rt_frame_scopes": series[("render", "frame_scope")]["rows"],
     }
+
+
+B2_SOURCE = "b2_frame_provider"
+
+
+def empty_series_map():
+    """与 load_frame_series 同结构的空表（B2 兜底时用同一个形状）。"""
+    return {key: empty_series(key[0], key[1]) for key in SERIES_ORDER}
+
+
+def b2_series(trace_path, out_dir, ue_root=None, limit=0):
+    """R4 第三级：A 路没有帧轨道时，用 B2（TraceServices 的 IFrameProvider）读帧。
+
+    返回 (series dict, warnings)。B2 只给 Game / Rendering 两条帧轨道，没有 Frame scope，
+    所以 frame_scope 两项留空；帧元组仍按 (start, end, duration, track_index)，单位秒。
+    """
+    from pipeline.extract import b2
+
+    series = empty_series_map()
+    warnings = []
+    out_path = os.path.join(out_dir, "b2_frames.json")
+    ok, text = b2.run_mode("frames", trace_path, out_path, limit=limit, ue_root=ue_root)
+    if not ok:
+        warnings.append("B2 帧兜底失败（%s）" % os.path.join(out_dir, "b2_frames.log"))
+        return series, warnings
+    with io.open(out_path, encoding="utf-8") as f:
+        payload = json.load(f)
+
+    for side in ("game", "render"):
+        block = payload.get(side) or {}
+        target = series[(side, "frame_track")]
+        target["source"] = B2_SOURCE
+        target["timer"] = "Game Frame N" if side == "game" else "Rendering Frame N"
+        target["rows"] = int(block.get("count") or 0)
+        frames = []
+        for item in block.get("frames") or []:
+            start = item.get("start_ms")
+            end = item.get("end_ms")
+            if start is None or end is None:
+                continue
+            if not (math.isfinite(start) and math.isfinite(end)):
+                target["nonfinite"].append((start, item.get("idx")))
+                continue
+            frames.append((start / 1000.0, end / 1000.0, (end - start) / 1000.0, item.get("idx")))
+        target["frames"] = frames
+        if frames:
+            target["threads"] = ["IFrameProvider"]
+    warnings.append("A 路没有帧轨道，参考序列改用 B2 IFrameProvider（R4 第 3 级）")
+    return series, warnings
 
 
 def pick_reference(series: dict):

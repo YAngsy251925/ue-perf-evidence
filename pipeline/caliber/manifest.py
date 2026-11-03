@@ -20,7 +20,7 @@ import sys
 from pipeline.caliber import conditions
 from pipeline.caliber.bridge_detect import detect_bridge
 from pipeline.caliber.engine_log import parse_engine_log
-from pipeline.caliber.frame_probe import frames_seen, load_frame_series, pick_reference
+from pipeline.caliber.frame_probe import b2_series, frames_seen, load_frame_series, pick_reference
 from pipeline.caliber.frame_semantics import build_frame_semantics
 from pipeline.caliber.insights_log import read_session_duration
 from pipeline.caliber.rhi_detect import detect_rhi
@@ -142,6 +142,12 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
         warnings.append("no engine log: command line, build configuration and RHI name are unknown")
     names = read_timer_names(extract)
     series = load_frame_series(extract)
+    # R4 的第三级：A 路一条帧轨道都没有时，退回 B2 的 IFrameProvider（M4.2）
+    if pick_reference(series) is None and trace_path and os.path.isfile(trace_path):
+        fallback, b2_warnings = b2_series(trace_path, extract)
+        if pick_reference(fallback) is not None:
+            series = fallback
+            warnings += b2_warnings
     frames = frames_seen(series)
     rhi = detect_rhi(log, frames)
     cmd = log["command_line"] if log else None
