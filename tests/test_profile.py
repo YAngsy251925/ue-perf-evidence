@@ -23,8 +23,21 @@ def shipped(name):
 
 class ShippedProfilesTest(unittest.TestCase):
     def test_both_profiles_validate(self):
-        for name in ("smoke", "measure"):
+        for name in ("smoke", "measure", "measure_regress"):
             self.assertEqual(P.validate(shipped(name)), [], name)
+
+    def test_measure_regress_only_adds_injection(self):
+        """M3.4 的 B 组必须与 measure 完全同条件，唯一差别是两条注入 cvar。"""
+        base, regress = shipped("measure"), shipped("measure_regress")
+        for key in ("map", "rhi", "window", "flags", "trace", "cvars", "csv",
+                    "conditions", "stop", "set_res_cvar"):
+            self.assertEqual(regress.get(key), base.get(key), key)
+        self.assertEqual(base.get("exec_cmds"), [])
+        self.assertEqual(regress.get("exec_cmds"),
+                         ["PerfEvidence.BusyCount 10", "PerfEvidence.BusyMs 2"])
+        args = P.build_args(regress, os.path.join(tempfile.gettempdir(), "r"), "<uproject>")
+        exec_arg = [x for x in args if x.startswith("-ExecCmds=")][0]
+        self.assertIn("PerfEvidence.BusyCount 10", exec_arg)
 
     def test_measure_pins_section_7_2(self):
         cvars = shipped("measure")["cvars"]

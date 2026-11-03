@@ -60,8 +60,23 @@ python perfctl.py profile prepare measure runs/<run_id>      # 写 launch.bat + 
 python perfctl.py capture measure runs/<run_id>
 python perfctl.py manifest runs/<run_id>
 
-# diff（两个 run 的 cpu 对比，v0：只报数值，不下变快 / 变慢结论——R9 在 M3.3 接入）
+# diff（cpu 对比）：每组一个 run 时只报数值；每组 ≥5 个 run 时按 R9 判定（噪声门 CV<3%、Welch 阈值、MDE）
 python perfctl.py diff cpu <run_a> <run_b> --out <dir> [--trace-a FILE] [--trace-b FILE]
+python perfctl.py diff cpu -a R1 R2 R3 R4 R5 -b S1 S2 S3 S4 S5 --out <dir>    # 组形态（M3.3）
+python perfctl.py diff cpu -a ... -b ... --out <dir> --significance-only       # 只读 manifest 的 p50，CI 门槛
+
+# run 列表（M3.2，对应 §3 的 perf_runs）：先看有哪些 run、哪些可测量、稳态多长
+python perfctl.py runs [--filter m3] [--json]
+
+# MCP 通路（M3.2）：编辑器里先 exec "ModelContextProtocol.StartServer 18900"，再从外部客户端调工具
+# 注意 call_tool 的 tool_name 只认裸名（PerfStartCapture），不是 describe_toolset 里的三段名
+python -X utf8 tools/mcp_probe.py --url http://127.0.0.1:18900/mcp --call call_tool \
+  '{"toolset_name":"PerfEvidenceToolset.PerfEvidenceToolset","tool_name":"PerfStartCapture","arguments":{"TracePath":"D:/x.utrace"}}'
+
+# M3.4 闭环演示（A/B/C 各 5 次真实 RHI；约 45 分钟，连续弹窗）
+# 注入端在 plugin/PerfEvidenceHost（装进目标工程即可用），演示驱动在 harness/m3_4_demo.py
+python -X utf8 harness/m3_4_demo.py --n 5 --runs-dir runs/m3_4L2   --profile-a harness/profiles/lyra_measure_work.json   --profile-b harness/profiles/lyra_measure_regress.json   --uproject C:/UEProject/LyraStarterGame/LyraStarterGame.uproject
+# 已有数据只想重出报告：加 --skip-capture
 
 # 测试
 python -X utf8 -m unittest discover -s tests -t .
