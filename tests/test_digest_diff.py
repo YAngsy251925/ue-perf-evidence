@@ -127,28 +127,40 @@ class DiffAcceptanceTest(unittest.TestCase):
         d, md = self.diff_for("example", "d3d12")
         ex, d3 = self.load_probe("ex_top200"), self.load_probe("d3d12_top200")
         self.assertEqual(d["capability"], "comparable")
-        # 侧摘要：总数与等待类合计来自 top-200 全集（与 digest v1 的 top-50 不同）
+        # 侧摘要：总数与等待类合计来自 top-200 全集（与 digest v1 的 top-50 不同）。
+        # P21：GameThread 导出混着 GPU 队列行，B 侧期望值用同一 run 缓存的 GPU1 top-200
+        # 导出（独立命令、同 trace 同窗口）按 (Name,Count,Incl) 差集净化后重算。
         ta = sum(r["excl"] for r in ex.values())
-        tb = sum(r["excl"] for r in d3.values())
+        from pipeline.digest.views import cpu
+        gpu1 = cpu.load_rows(os.path.join("runs", "acceptance", "d3d12", "digest_export",
+                                          "window_steady_top200", "stats_GPU1_window.csv"))
+        gpu_keys = run_digest.gpu_row_keys(gpu1)
+        from pipeline.extract import uecsv
+        d3_rows = [{"name": r["Name"], "count": int(float(r["Count"] or 0)),
+                    "incl": float(r["Incl"] or 0), "excl": float(r["Excl"] or 0)}
+                   for r in uecsv.read_dicts(os.path.join(self.PROBE, "d3d12_top200",
+                                                          "stats_GameThread_window.csv"))]
+        tb = sum(r["excl"] for r in d3_rows
+                 if (r["name"], r["count"], round(r["incl"], 6)) not in gpu_keys)
         self.assertEqual(d["sides"]["a"]["total_self_s"], round(ta, 3))
         self.assertEqual(d["sides"]["b"]["total_self_s"], round(tb, 3))
-        # Top 差值第一名：RenderGraphExecute（A 无，B 10.077）
+        # Top 差值第一名：UpdateCoreCsvStats_BeginFrame（A 无，B 0.132）。净化前是 RenderGraphExecute，
+        # 它是 GPU 行，P21 之后不再出现在 GT 侧
         top = d["top_delta"][0]
         self.assertEqual((top["name"], top["a_s"], top["b_s"], top["delta_s"]),
-                         ("RenderGraphExecute", 0.0, round(d3["RenderGraphExecute"]["excl"], 3),
-                          round(d3["RenderGraphExecute"]["excl"], 3)))
+                         ("UpdateCoreCsvStats_BeginFrame", 0.0, 0.132, 0.132))
         # 等待类：A 侧 GameThreadWaitForTask 行级值不变（78.78% 是对 top-50 分母的，
         # top-200 分母下不同——这里只对绝对秒数做断言）
         self.assertEqual(d["wait"]["rows"][0]["name"], "Game thread idle time")
         idle_b = round(d3["Game thread idle time"]["excl"], 3)
         self.assertEqual(d["wait"]["rows"][0]["b_s"], idle_b)
         self.assertEqual(d["wait"]["delta_s"], round(d["wait"]["b"]["self_s"] - d["wait"]["a"]["self_s"], 3))
-        # 新增 / 消失
+        # 新增 / 消失（new_in_b 的第一名是 csv profiler 计时，不再是 GPU pass）
         self.assertGreater(d["new_in_b"]["total"], 100)
-        self.assertIn("RenderGraphExecute", [r["name"] for r in d["new_in_b"]["rows"][:3]])
+        self.assertIn("UpdateCoreCsvStats_BeginFrame", [r["name"] for r in d["new_in_b"]["rows"][:3]])
         self.assertIn("FEngineLoop", [r["name"] for r in d["only_in_a"]["rows"][:3]])
         self.assertIn(diff.NOTE_V0, md)
-        self.assertIn("RenderGraphExecute", md)
+        self.assertIn("UpdateCoreCsvStats_BeginFrame", md)
 
     def test_b2_smoke_gate(self):
         d, md = self.diff_for("b2_smoke", "example")

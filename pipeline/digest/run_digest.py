@@ -188,6 +188,7 @@ def render_md(digest):
               "- build_config: %s" % c["build_config"],
               "- 窗口: %s %s（成帧 %s）" % (c["stats_window"], fmt_range(c["window"]), fmt_range(c["frames_window"])),
               "- 帧轨道参考: %s" % (fmt_reference(c["reference"])),
+              "- GPU 行净化(P21): %s" % c.get("gpu_rows_purged", "n/a（未净化路径）"),
               "- 帧数(窗口内): game=%s render=%s" % (c["thread_frames"]["game"], c["thread_frames"]["render"]),
               "- 桥接: %s（requested=%s）" % (fmt_bridge(c["bridge_effective"]), c["bridge_requested"]),
               ""]
@@ -215,6 +216,10 @@ def render_md(digest):
     lines += ["| %s | %s | %s%% | %s | %s |" % (r["prefix"], r["self_s"], r["self_pct"], r["timers"], r["calls"])
               for r in st["by_prefix"]]
     lines += ["", "## 省略", "其余 %s 个 timer 合计 %s%%。" % (st["omitted"]["timers"], st["omitted"]["self_pct"]), ""]
+    dd = digest.get("b2_drilldown")
+    if dd:
+        from pipeline.digest import b2_drilldown
+        lines += [b2_drilldown.render_md(dd)]
     if digest["refs"]:
         lines += ["## 下钻"] + ["- %s" % r for r in digest["refs"]] + [""]
     lines += ["## 警告"]
@@ -243,10 +248,31 @@ def resolve(run_dir, value, default_name):
     return os.path.join(run_dir, default_name)
 
 
+GPU_THREAD = "GPU1"
+
+
+def gpu_row_keys(rows):
+    """净化键：(名字, 次数, incl)。实测（2026-11-04，A1）GPU 队列行在 GameThread 导出里与
+    GPU1 导出逐字节相同（Name/Count/Incl/Excl 全同），该三元组足以精确识别。"""
+    return {(r["name"], r["count"], round(r["incl"], 6)) for r in rows}
+
+
+def purge_gpu_rows(rows, gpu_rows):
+    """把混进 GameThread 统计的 GPU 队列行剔除。返回 (净化后的行, 剔除数)。"""
+    keys = gpu_row_keys(gpu_rows)
+    kept = [r for r in rows if (r["name"], r["count"], round(r["incl"], 6)) not in keys]
+    return kept, len(rows) - len(kept)
+
+
 def prepare_rows(run_dir, manifest, trace, thread="GameThread", ue_root=None, export_top=50, outdir_suffix=""):
-    """窗口导出（带缓存）+ 读取 + 按名合并 + 口径行。measurable=false 由调用方先处理
+    """窗口导出（带缓存）+ 读取 + GPU 净化 + 按名合并 + 口径行。measurable=false 由调用方先处理
     （not_measurable_digest）。返回 ("ok", 合并后的行, caliber, warnings) 或
-    ("blocked", 原因, caliber, warnings)；blocked 只发生在没有统计窗口时，此时不做任何导出。"""
+    ("blocked", 原因, caliber, warnings)；blocked 只发生在没有统计窗口时，此时不做任何导出。
+
+    P21 净化：Insights 的 -threads= 对 GPU 队列时间线不生效，GameThread 的统计导出从 M1 起
+    就混着 GPU 队列行（实测 Frame/SceneRender 与 GPU1 导出逐字节相同）。GameThread 导出时
+    同一次分析多导一份 GPU1 统计做差集净化；GPU1 缺失（trace 没带 gpu 通道）只记 warning。
+    """
     win_name = manifest["window_basis"].get("stats_window")
     window = manifest["windows"].get(win_name) if win_name else None
     warnings = list(manifest.get("warnings", []))
@@ -258,16 +284,39 @@ def prepare_rows(run_dir, manifest, trace, thread="GameThread", ue_root=None, ex
             warnings.append("stats window %s is null in the manifest" % win_name)
         return "blocked", "no stats window", caliber, warnings
 
+    threads = [thread]
+    gpu_csv_name = None
+    if thread == "GameThread":
+        threads = [thread, GPU_THREAD]
+        gpu_csv_name = "stats_%s_window.csv" % insights_export.safe_name(GPU_THREAD)
+
     # 窗口导出写在 run 目录自己的 digest_export/ 下：manifest.inputs.extract 可能指向只读的实验档案。
-    # 导出结果按 (trace, 窗口, top, 线程) 缓存：export.rsp 与输入 stamp 都匹配时直接复用 CSV，
+    # 导出结果按 (trace, 窗口, top, 线程, 净化) 缓存：export.rsp 与输入 stamp 都匹配时直接复用 CSV，
     # 让 digest / diff 的重复调用与测试套件不必反复拉起 UnrealInsights（它的启动偶发很慢）。
     outdir = os.path.join(run_dir, "digest_export", "window_%s%s" % (win_name, outdir_suffix))
-    cmds, _ = insights_export.window_commands(outdir, [thread], export_top, repr(window[0]), repr(window[1]))
+    cmds, _ = insights_export.window_commands(outdir, threads, export_top, repr(window[0]), repr(window[1]))
     source_csv = os.path.join(outdir, "stats_%s_window.csv" % insights_export.safe_name(thread))
+    gpu_csv = os.path.join(outdir, gpu_csv_name) if gpu_csv_name else None
     rsp_path = os.path.join(outdir, "export.rsp")
     stamp_path = os.path.join(outdir, "export_inputs.json")
     stamp = json.dumps({"trace": os.path.abspath(trace), "thread": thread, "top": export_top,
-                        "start": repr(window[0]), "end": repr(window[1])}, sort_keys=True)
+                        "start": repr(window[0]), "end": repr(window[1]),
+                        "purge_gpu1": bool(gpu_csv_name)}, sort_keys=True)
+
+    def load_purged():
+        """读取 + 净化（合并前按行匹配）+ 口径标注。"""
+        rows_raw = cpu.load_rows(source_csv)
+        purged = 0
+        if gpu_csv_name:
+            if os.path.isfile(gpu_csv):
+                rows_raw, purged = purge_gpu_rows(rows_raw, cpu.load_rows(gpu_csv))
+            else:
+                warnings.append("no GPU1 stats for purification; GameThread stats may include "
+                                "GPU queue rows if the trace has a gpu channel")
+        cal = caliber_from_manifest(manifest, os.path.basename(source_csv))
+        cal["gpu_rows_purged"] = purged
+        return rows_raw, cal
+
     if os.path.isfile(source_csv) and os.path.isfile(rsp_path) and os.path.isfile(stamp_path):
         with open(rsp_path, encoding="utf-8") as f:
             rsp_ok = f.read() == "\n".join(cmds) + "\n"
@@ -275,24 +324,27 @@ def prepare_rows(run_dir, manifest, trace, thread="GameThread", ue_root=None, ex
             stamp_ok = f.read() == stamp
         if rsp_ok and stamp_ok:
             print("[cache] reusing %s" % source_csv)
-            caliber = caliber_from_manifest(manifest, os.path.basename(source_csv))
-            return "ok", merge_by_name(cpu.load_rows(source_csv)), caliber, warnings
+            rows_raw, caliber = load_purged()
+            return "ok", merge_by_name(rows_raw), caliber, warnings
 
     argv = (["--ue-root", ue_root] if ue_root else []) + [
         "window", trace, "--out", outdir,
-        "--start", repr(window[0]), "--end", repr(window[1]), "--threads", thread]
+        "--start", repr(window[0]), "--end", repr(window[1]), "--threads", ",".join(threads)]
     if export_top != 50:
         argv += ["--top", str(export_top)]
+    if gpu_csv_name:
+        argv += ["--optional", gpu_csv_name]
     if insights_export.main(argv) != 0:
         sys.exit("[error] windowed export failed (see insights log under %s)" % outdir)
     with open(stamp_path, "w", encoding="utf-8") as f:
         f.write(stamp)
-    caliber = caliber_from_manifest(manifest, os.path.basename(source_csv))
-    return "ok", merge_by_name(cpu.load_rows(source_csv)), caliber, warnings
+    rows_raw, caliber = load_purged()
+    return "ok", merge_by_name(rows_raw), caliber, warnings
 
 
-def build_run_digest(run_dir, manifest, trace, thread="GameThread", ue_root=None):
-    """run 级入口。measurable=false 时不导出；否则按稳态窗口做一次窗口导出。"""
+def build_run_digest(run_dir, manifest, trace, thread="GameThread", ue_root=None, with_b2=False):
+    """run 级入口。measurable=false 时不导出；否则按稳态窗口做一次窗口导出。
+    with_b2=True 时追加 B2 下钻（M4.3：callers/regions/counters，缓存 run 目录 b2/），纯增量。"""
     if not manifest.get("measurable", False):
         return not_measurable_digest(manifest)
     win_name = manifest["window_basis"].get("stats_window")
@@ -302,7 +354,18 @@ def build_run_digest(run_dir, manifest, trace, thread="GameThread", ue_root=None
                   "conclusion": {"text": "没有可用的统计窗口，无法给出性能结论", "confidence": "none"},
                   "caliber": caliber, "stats": None, "refs": [], "warnings": warnings}
         return digest, render_md(digest)
-    return build_from_stats(rows, caliber, win_name, warnings)
+    digest, _md = build_from_stats(rows, caliber, win_name, warnings)
+    if with_b2:
+        from pipeline.digest import b2_drilldown  # 局部导入：只有 --b2 时才需要
+        top_rows = (digest.get("stats") or {}).get("top_by_self_time") or []
+        top_timer = top_rows[0]["name"] if top_rows else None
+        if top_timer:
+            dd = b2_drilldown.build_drilldown(run_dir, manifest, trace, top_timer, ue_root, want_run=True)
+            digest["b2_drilldown"] = dd
+            warnings.extend(dd.get("warnings") or [])
+            digest["warnings"] = warnings
+        return digest, render_md(digest)
+    return digest, _md
 
 
 def main(argv=None) -> int:
@@ -315,6 +378,8 @@ def main(argv=None) -> int:
     ap.add_argument("--trace", default=None, help="trace 文件（默认 manifest.trace.file，再退 <run_dir>/trace.utrace）")
     ap.add_argument("--manifest", default=None, help="manifest 路径（默认 <run_dir>/manifest.json）")
     ap.add_argument("--ue-root", default=None, help="窗口导出使用的 UE 根目录")
+    ap.add_argument("--b2", action="store_true",
+                    help="追加 B2 下钻（M4.3：Top1 callers + regions + counters；约 60 秒，缓存在 run 目录 b2/）")
     a = ap.parse_args(argv)
 
     run_dir = os.path.abspath(a.run_dir)
@@ -331,7 +396,7 @@ def main(argv=None) -> int:
         print("[error] trace not found: %s" % trace)
         return 1
 
-    digest, md = build_run_digest(run_dir, manifest, trace, a.thread, a.ue_root)
+    digest, md = build_run_digest(run_dir, manifest, trace, a.thread, a.ue_root, with_b2=a.b2)
     os.makedirs(a.out, exist_ok=True)
     json_path = os.path.join(a.out, "perf_digest.json")
     md_path = os.path.join(a.out, "perf_digest.md")

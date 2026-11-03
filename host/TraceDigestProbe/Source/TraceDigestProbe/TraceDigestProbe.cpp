@@ -1016,22 +1016,112 @@ static void EmitGpu(const TraceServices::IAnalysisSession& Session, FOutputDevic
 	}
 	Timers += TEXT("]");
 
+	// fences：跨队列 resolved fence（signal 在 A 队列 / wait 在 B 队列，同 Value 配对），
+	// stall = wait.Timestamp - signal.Timestamp，是「CPU 等 GPU」的直接证据。
+	// 注意引擎实现（TimingProfiler.cpp EnumerateResolvedGpuFences）对每个 QueueId 会从
+	// signal 侧与 wait 侧各枚举一遍同一对，因此只保留 SignalQueueId == 当前队列 的那份，避免重复计数。
+	struct FFencePair
+	{
+		uint32 SignalQueue = 0;
+		uint32 WaitQueue = 0;
+		int64 Count = 0;
+		double SumStall = 0.0;
+		double MaxStall = 0.0;
+	};
+	struct FFenceSample
+	{
+		double Stall = 0.0;
+		double SignalTime = 0.0;
+		double WaitTime = 0.0;
+		uint64 Value = 0;
+		uint32 SignalQueue = 0;
+		uint32 WaitQueue = 0;
+	};
+	const int32 MaxWorst = (Limit > 0) ? FMath::Min(Limit, 64) : 16;
+	TMap<uint64, FFencePair> FencePairs;
+	TArray<FFenceSample> FenceWorst;
+	int64 FenceTotal = 0;
+	Timing->EnumerateGpuQueues([&](const TraceServices::FGpuQueueInfo& Q)
+	{
+		Timing->EnumerateResolvedGpuFences(Q.Id, WindowStart, WindowEnd,
+			[&](uint32 SignalQueueId, const TraceServices::FGpuSignalFence& Signal,
+				uint32 WaitQueueId, const TraceServices::FGpuWaitFence& Wait) -> TraceServices::EEnumerateResult
+			{
+				if (SignalQueueId != Q.Id) { return TraceServices::EEnumerateResult::Continue; }
+				const double Stall = FMath::Max(0.0, Wait.Timestamp - Signal.Timestamp);
+				++FenceTotal;
+				FFencePair& P = FencePairs.FindOrAdd((static_cast<uint64>(SignalQueueId) << 32) | WaitQueueId);
+				P.SignalQueue = SignalQueueId;
+				P.WaitQueue = WaitQueueId;
+				++P.Count;
+				P.SumStall += Stall;
+				P.MaxStall = FMath::Max(P.MaxStall, Stall);
+				if (FenceWorst.Num() >= MaxWorst)
+				{
+					// 有界收集：比当前保留集合的最小值还小就丢弃（MaxWorst ≤ 64，线性扫描可忽略）
+					int32 MinIdx = 0;
+					for (int32 i = 1; i < FenceWorst.Num(); ++i)
+					{
+						if (FenceWorst[i].Stall < FenceWorst[MinIdx].Stall) { MinIdx = i; }
+					}
+					if (Stall <= FenceWorst[MinIdx].Stall)
+					{
+						return TraceServices::EEnumerateResult::Continue;
+					}
+					FenceWorst.RemoveAt(MinIdx, 1, EAllowShrinking::No);
+				}
+				FFenceSample S;
+				S.Stall = Stall; S.SignalTime = Signal.Timestamp; S.WaitTime = Wait.Timestamp;
+				S.Value = Wait.Value; S.SignalQueue = SignalQueueId; S.WaitQueue = WaitQueueId;
+				FenceWorst.Add(S);
+				return TraceServices::EEnumerateResult::Continue;
+			});
+	});
+	FenceWorst.Sort([](const FFenceSample& A, const FFenceSample& B) { return A.Stall > B.Stall; });
+
+	TArray<FFencePair> FenceRows;
+	for (const TPair<uint64, FFencePair>& Pair : FencePairs) { FenceRows.Add(Pair.Value); }
+	FenceRows.Sort([](const FFencePair& A, const FFencePair& B) { return A.SumStall > B.SumStall; });
+	FString FencePairsJson = TEXT("[");
+	for (int32 i = 0; i < FenceRows.Num(); ++i)
+	{
+		if (i > 0) { FencePairsJson += TEXT(","); }
+		const FFencePair& P = FenceRows[i];
+		FencePairsJson += FString::Printf(
+			TEXT("{\"signal_queue\":%u,\"wait_queue\":%u,\"count\":%lld,\"sum_stall_s\":%.6f,\"max_stall_ms\":%.3f}"),
+			P.SignalQueue, P.WaitQueue, P.Count, P.SumStall, P.MaxStall * 1000.0);
+	}
+	FencePairsJson += TEXT("]");
+
+	FString FenceWorstJson = TEXT("[");
+	for (int32 i = 0; i < FenceWorst.Num(); ++i)
+	{
+		if (i > 0) { FenceWorstJson += TEXT(","); }
+		const FFenceSample& S = FenceWorst[i];
+		FenceWorstJson += FString::Printf(
+			TEXT("{\"stall_ms\":%.3f,\"signal_s\":%.6f,\"wait_s\":%.6f,\"signal_queue\":%u,\"wait_queue\":%u,\"value\":%llu}"),
+			S.Stall * 1000.0, S.SignalTime, S.WaitTime, S.SignalQueue, S.WaitQueue, S.Value);
+	}
+	FenceWorstJson += TEXT("]");
+
 	const double Span = FMath::Max(0.0, WindowEnd - WindowStart);
 	FString Out = FString::Printf(
 		TEXT("{\"schema\":\"perf-b2-gpu/0\",\"trace\":\"%s\",\"window\":[%.6f,%.6f],\"span_s\":%.6f,")
 		TEXT("\"gpu_timeline\":{\"available\":%s,\"index\":%u,\"gpu2_available\":%s,\"gpu2_index\":%u},")
 		TEXT("\"gpu_busy_s\":%.6f,\"gpu_busy_pct_window\":%.3f,\"sum_all_queues_s\":%.6f,")
 		TEXT("\"queue_count\":%d,\"queue_busy\":%s,\"queues\":%s,")
-		TEXT("\"timer_count\":%d,\"timers\":%s}"),
+		TEXT("\"timer_count\":%d,\"timers\":%s")
+		TEXT(",\"fences\":{\"events_in_window\":%lld,\"pair_count\":%d,\"pairs\":%s,\"worst\":%s}}"),
 		*JsonEscape(*TracePath), WindowStart, WindowEnd, Span,
 		bHasGpu ? TEXT("true") : TEXT("false"), GpuTimeline,
 		bHasGpu2 ? TEXT("true") : TEXT("false"), Gpu2Timeline,
 		GraphicsBusy, Span > 0.0 ? 100.0 * GraphicsBusy / Span : 0.0, SumAllQueues,
 		QueueCount, *QueueBusy, *Queues,
-		Acc.Num(), *Timers);
+		Acc.Num(), *Timers,
+		FenceTotal, FenceRows.Num(), *FencePairsJson, *FenceWorstJson);
 	WriteJson(Ar, OutPath, Out);
-	Ar.Logf(TEXT("PERF_GPU queues=%d aggregated=%d gpu_timeline=%d busy=%.3fs timers=%d"),
-		QueueCount, QueuesAggregated, bHasGpu ? (int32)GpuTimeline : -1, SumSelf, Acc.Num());
+	Ar.Logf(TEXT("PERF_GPU queues=%d aggregated=%d gpu_timeline=%d busy=%.3fs timers=%d fences=%lld"),
+		QueueCount, QueuesAggregated, bHasGpu ? (int32)GpuTimeline : -1, SumSelf, Acc.Num(), FenceTotal);
 }
 
 // counters：计数器清单 + 窗口内采样点数与最后值

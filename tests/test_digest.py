@@ -197,19 +197,18 @@ class DigestAcceptanceTest(unittest.TestCase):
     def test_d3d12_idle_and_merged_frame(self):
         digest, md = self.digest_for("d3d12")
         st = digest["stats"]
-        # 独立计算：total 25.033s；等待类 idle 9.890 + WaitForTasks 0.096 = 9.986s = 39.89%（0 行被滤掉不计）；
-        # Top1 RenderGraphExecute 40.26%
-        self.assertEqual(st["total_self_s"], 25.033)
-        self.assertEqual((st["wait_total"]["self_s"], st["wait_total"]["self_pct"]), (9.986, 39.89))
+        # P21 净化后独立计算：total 10.543s（13 行 GPU 队列行被剔除；净化前 25.033s，GPU 行占一半以上）；
+        # 等待类 idle 9.890 + WaitForTasks 0.096 = 9.986s = 94.71%（绝对值不变，分母净化后 39.89%→94.71%）；
+        # Top1 UpdateCoreCsvStats_BeginFrame 1.25%——GT 几乎全在等，非等待自耗时极散
+        self.assertEqual(st["total_self_s"], 10.543)
+        self.assertEqual((st["wait_total"]["self_s"], st["wait_total"]["self_pct"]), (9.986, 94.71))
         self.assertEqual(st["wait_timers"][0]["name"], "Game thread idle time")
         top = st["top_by_self_time"]
-        self.assertEqual(top[0]["name"], "RenderGraphExecute")
-        self.assertEqual((top[0]["self_s"], top[0]["self_pct"], top[0]["count"]), (10.077, 40.26, 2704))
-        # 同名不同 timer ID 的 "Frame" 合并成一行：0.720885 + 0.467013 + 0.003334（共 3 行）= 1.191
-        frame = next(r for r in top if r["name"] == "Frame")
-        self.assertEqual(frame["self_s"], 1.191)
-        self.assertEqual(frame["count"], 2030)
-        self.assertEqual(digest["conclusion"]["confidence"], "moderate")
+        self.assertEqual(top[0]["name"], "UpdateCoreCsvStats_BeginFrame")
+        self.assertEqual((top[0]["self_s"], top[0]["self_pct"], top[0]["count"]), (0.132, 1.25, 240))
+        # P21：GPU 队列的 "Frame" 行被剔除，Top 里不再出现合并的 Frame（同名合并逻辑由单测覆盖）
+        self.assertNotIn("Frame", [r["name"] for r in top])
+        self.assertEqual(digest["conclusion"]["confidence"], "clear")
         self.assertEqual(digest["caliber"]["rhi"], "D3D12")
         self.assertIn("Game thread idle time", md)
 

@@ -123,12 +123,15 @@ def probe_commands(outdir: str, gpu: bool, top: int):
     return cmds, names
 
 
-def report(outdir: str, names) -> int:
-    """P5：逐个校验产物；返回缺失数。"""
+def report(outdir: str, names, optional=()) -> int:
+    """P5：逐个校验产物；返回缺失数（optional 里的缺失只警告不计数）。"""
     missing = 0
     for n in names:
         p = os.path.join(outdir, n)
         if not os.path.isfile(p):
+            if n in optional:
+                print(f"  [optional-missing] {n}")
+                continue
             missing += 1
             print(f"  [MISSING] {n}")
             continue
@@ -160,6 +163,8 @@ def build_parser(ap=None):
     p.add_argument("--end", required=True, help="窗口终点，秒")
     p.add_argument("--threads", default="GameThread")
     p.add_argument("--top", type=int, default=50)
+    p.add_argument("--optional", default=None,
+                   help="逗号分隔的产物名：缺失只警告不算失败（如净化用的 GPU1 统计）")
 
     p = sub.add_parser("probe", help="帧轨道探测导出（R4）")
     p.add_argument("trace")
@@ -180,7 +185,8 @@ def run(a) -> int:
         cmds, names = probe_commands(a.out, a.gpu, a.top)
     log = run_insights(a.trace, a.out, cmds, ue_root=a.ue_root)
     print(f"[insights] {log}")
-    missing = report(os.path.abspath(a.out), names)
+    optional = split_list(getattr(a, "optional", None) or "")
+    missing = report(os.path.abspath(a.out), names, optional=optional)
     if missing:
         print(f"[error] {missing} expected file(s) missing")
         return 1
