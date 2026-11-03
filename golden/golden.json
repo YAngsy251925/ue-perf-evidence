@@ -8,6 +8,8 @@
    "sides": {
     "a": {
      "bridge_effective": false,
+     "group_n": 1,
+     "representative": "example",
      "rhi": null,
      "rhi_source": "trace",
      "rhi_state": "real",
@@ -36,6 +38,8 @@
     },
     "b": {
      "bridge_effective": true,
+     "group_n": 1,
+     "representative": "d3d12",
      "rhi": "D3D12",
      "rhi_source": "log",
      "rhi_state": "real",
@@ -186,6 +190,7 @@
     ]
    },
    "warnings": [
+    "[a] example: frame_semantics.game.stats.interval_ms.p50 缺失，跳过",
     "[a] no engine log: command line, build configuration and RHI name are unknown",
     "[a] rhi name unknown: no engine log; real RHI inferred from rendering frames in the trace",
     "[a] no game frames in the trace: frame track and Frame scopes are both empty (R4; the frame_provider fallback arrives in M4.2)",

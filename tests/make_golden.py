@@ -26,7 +26,7 @@ def main() -> int:
     golden = acceptance_data.collect_golden()
     out = os.path.join(REPO, "golden", "golden.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "w", encoding="utf-8") as f:
+    with open(out, "w", encoding="utf-8", newline="\n") as f:
         json.dump(golden, f, ensure_ascii=False, indent=1, sort_keys=True)
     print("[ok] %s (runs=%d, digests=%d, diffs=%d)" % (
         out, len(golden["runs"]), len(golden["digests"]), len(golden["diffs"])))

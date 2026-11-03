@@ -19,7 +19,7 @@ import json
 import os
 import sys
 
-from pipeline.digest import run_digest
+from pipeline.digest import run_digest, significance
 
 SCHEMA = "perf-diff/0"
 KIND = "cpu-diff"
@@ -28,6 +28,30 @@ DIFF_UNIVERSE = 200
 NEW_GONE_CAP = 15
 NOTE_V0 = ("每组 n=1，未做重复测量；本报告只给数值，不下“变快 / 变慢”结论"
            "（R9 显著性判定在 M3.3 接入）")
+NOTE_R9 = ("按 R9 判定：每组 n ≥ 5、组内 CV < 3% 噪声门、Welch 阈值（97.5% 分位）；"
+           "每组只有一个 run 或噪声门不过时只报数值")
+METRIC = "frame_interval_p50_ms"
+
+
+def run_p50(manifest, side="game"):
+    """从 manifest 的 frame_semantics 取该 run 的帧间隔 p50（R15：interval，不是 duration）。"""
+    fs = (manifest.get("frame_semantics") or {}).get(side) or {}
+    stats = fs.get("stats") or {}
+    interval = stats.get("interval_ms") or {}
+    p50 = interval.get("p50")
+    return float(p50) if isinstance(p50, (int, float)) else None
+
+
+def pick_representative(sides, metric_side="game"):
+    """组内挑一个代表 run 做 timer 表对比：p50 最接近组中位数的那个（缺失时取第一个）。"""
+    pairs = [(run_p50(s["manifest"], metric_side), i) for i, s in enumerate(sides)]
+    usable = [(v, i) for v, i in pairs if v is not None]
+    if not usable:
+        return sides[0]
+    values = sorted(v for v, _ in usable)
+    mid = len(values) // 2
+    median = values[mid] if len(values) % 2 else 0.5 * (values[mid - 1] + values[mid])
+    return sides[min(usable, key=lambda p: (abs(p[0] - median), p[1]))[1]]
 
 
 def delta_rows(rows_a, rows_b, total_a, total_b, cap=DIFF_TOP):
@@ -80,30 +104,87 @@ def side_summary(rows, caliber):
 
 
 def build_diff(side_a, side_b, thread="GameThread", ue_root=None):
-    """side = {"run_dir", "manifest", "trace"}。返回 (diff dict, md)。
-    先分类两侧：任一侧不可测量即整体 not_comparable，不给可测的那一侧做任何导出。"""
+    """兼容 v0 调用：每组一个 run。"""
+    return build_group_diff([side_a], [side_b], thread, ue_root)
+
+
+def build_group_diff(sides_a, sides_b, thread="GameThread", ue_root=None, metric_side="game",
+                     timer_diff=True):
+    """每组若干 run（M3.3）。
+
+    - 显著性（R9）用每组的 p50 帧间隔做 Welch 判定；
+    - timer 表对比只跑组内的“代表 run”（p50 最接近组中位数），报告口径里写明；
+    - timer_diff=False 时只做 R9 判定（只读 manifest，不导出 trace，CI 用它做门槛）；
+    - 任一侧不可测量即整体 not_comparable，不做任何导出（R11）。
+    """
     warnings = []
     prepared = {}
-    for key, side in (("a", side_a), ("b", side_b)):
-        manifest = side["manifest"]
-        if not manifest.get("measurable", False):
-            prepared[key] = {"status": "not_measurable", "reason": manifest.get("measurable_reason", "unknown reason"),
-                             "manifest": manifest}
+    for key, sides in (("a", sides_a), ("b", sides_b)):
+        bad = [s for s in sides if not s["manifest"].get("measurable", False)]
+        if bad:
+            prepared[key] = {
+                "status": "not_measurable",
+                "reason": bad[0]["manifest"].get("measurable_reason", "unknown reason"),
+                "manifest": bad[0]["manifest"],
+                "subset": len(bad),
+                "group_n": len(sides),
+            }
         else:
-            prepared[key] = {"status": "pending", "manifest": manifest}
+            prepared[key] = {"status": "pending", "manifest": sides[0]["manifest"]}
 
     if any(p["status"] != "pending" for p in prepared.values()):
-        diff = {"schema": SCHEMA, "kind": KIND, "capability": "not_comparable", "note": NOTE_V0,
+        single = len(sides_a) <= 1 and len(sides_b) <= 1
+        diff = {"schema": SCHEMA, "kind": KIND, "capability": "not_comparable",
+                "note": NOTE_V0 if single else NOTE_R9,
+                "metric": METRIC,
                 "sides": {k: {"run_id": p["manifest"]["run_id"], "status": p["status"],
-                              "reason": p.get("reason")} for k, p in prepared.items()},
+                              "reason": p.get("reason"),
+                              "group_n": p.get("group_n", 1),
+                              "not_measurable_runs": p.get("subset", 0)}
+                          for k, p in prepared.items()},
+                "significance": None,
                 "warnings": warnings}
+        return diff, render_md(diff)
+
+    # R9：每组的 p50 序列（缺 frame_semantics 的 run 计为缺失，不进统计但记警告）
+    p50s = {}
+    for key, sides in (("a", sides_a), ("b", sides_b)):
+        values = []
+        for s in sides:
+            v = run_p50(s["manifest"], metric_side)
+            if v is None:
+                warnings.append("[%s] %s: frame_semantics.%s.stats.interval_ms.p50 缺失，跳过"
+                                % (key, s["manifest"].get("run_id"), metric_side))
+            else:
+                values.append(v)
+        p50s[key] = values
+    sig = significance.judge(p50s["a"], p50s["b"], unit="ms", label=METRIC)
+    sig["metric"] = METRIC
+    sig["metric_side"] = metric_side
+
+    reps = {"a": pick_representative(sides_a, metric_side),
+            "b": pick_representative(sides_b, metric_side)}
+
+    if not timer_diff:
+        single = len(sides_a) <= 1 and len(sides_b) <= 1
+        diff = {
+            "schema": SCHEMA, "kind": KIND, "capability": "comparable",
+            "timer_diff": False,
+            "note": NOTE_V0 if single else NOTE_R9,
+            "metric": METRIC, "significance": sig,
+            "sides": {k: {"run_id": reps[k]["manifest"].get("run_id"),
+                          "group_n": len(sides_a if k == "a" else sides_b),
+                          "representative": reps[k]["manifest"].get("run_id"),
+                          "p50s_ms": sig["groups"][k]["values"]} for k in ("a", "b")},
+            "top_delta": None, "wait": None, "new_in_b": None, "only_in_a": None,
+            "warnings": warnings,
+        }
         return diff, render_md(diff)
 
     for key in ("a", "b"):
         p = prepared[key]
         status, rows, caliber, w = run_digest.prepare_rows(
-            side_a["run_dir"] if key == "a" else side_b["run_dir"],
-            p["manifest"], side_a["trace"] if key == "a" else side_b["trace"], thread, ue_root,
+            reps[key]["run_dir"], p["manifest"], reps[key]["trace"], thread, ue_root,
             export_top=DIFF_UNIVERSE, outdir_suffix=("_top%d" % DIFF_UNIVERSE))
         p.update({"status": status, "rows": rows, "caliber": caliber})
         warnings += ["[%s] %s" % (key, x) for x in w]
@@ -122,7 +203,12 @@ def build_diff(side_a, side_b, thread="GameThread", ue_root=None):
     gone_rows, gone_total = side_only(others_a, others_b, total_a)
 
     diff = {
-        "schema": SCHEMA, "kind": KIND, "capability": "comparable", "note": NOTE_V0,
+        "schema": SCHEMA, "kind": KIND, "capability": "comparable",
+        "timer_diff": True,
+        "note": NOTE_R9 if (sig["groups"]["a"]["n"] >= significance.MIN_N
+                            or sig["groups"]["b"]["n"] >= significance.MIN_N) else NOTE_V0,
+        "metric": METRIC,
+        "significance": sig,
         "sides": {"a": side_summary(rows_a, cal_a), "b": side_summary(rows_b, cal_b)},
         "top_delta": top_delta,
         "wait": {"a": wt_a, "b": wt_b, "delta_s": round(wt_b["self_s"] - wt_a["self_s"], 3) + 0.0,
@@ -131,12 +217,23 @@ def build_diff(side_a, side_b, thread="GameThread", ue_root=None):
         "only_in_a": {"rows": gone_rows, "total": gone_total},
         "warnings": warnings,
     }
+    diff["sides"]["a"]["group_n"] = len(sides_a)
+    diff["sides"]["b"]["group_n"] = len(sides_b)
+    diff["sides"]["a"]["representative"] = reps["a"]["manifest"].get("run_id")
+    diff["sides"]["b"]["representative"] = reps["b"]["manifest"].get("run_id")
     return diff, render_md(diff)
 
 
 def render_md(diff):
     a, b = diff["sides"]["a"], diff["sides"]["b"]
-    lines = ["# Perf diff — %s — %s vs %s" % (diff["kind"], a["run_id"], b["run_id"]), "",
+
+    def side_label(side, suffix):
+        n = side.get("group_n") or 1
+        if n <= 1:
+            return side["run_id"]
+        return "%s（%d runs，代表 %s）" % (suffix, n, side.get("representative") or side["run_id"])
+
+    lines = ["# Perf diff — %s — %s vs %s" % (diff["kind"], side_label(a, "A"), side_label(b, "B")), "",
              "## 说明", diff["note"], ""]
     if diff["capability"] != "comparable":
         lines += ["## 两侧状态", ""]
@@ -144,6 +241,18 @@ def render_md(diff):
             s = diff["sides"][key]
             lines.append("- %s: %s（%s）" % (key, s["run_id"], s.get("reason") or s["status"]))
         lines += ["", "## 警告"]
+        lines += ["- %s" % w for w in diff["warnings"]] or ["- （无）"]
+        return "\n".join(lines) + "\n"
+
+    if not diff.get("timer_diff", True):
+        # 只做 R9：不读 trace，只给组统计与判定（CI 门槛用）
+        lines += ["## 口径", "| | A | B |", "|---|---|---|",
+                  "| run_id（代表） | %s | %s |" % (a.get("representative"), b.get("representative")),
+                  "| 组内 run 数 | %s | %s |" % (a.get("group_n"), b.get("group_n")),
+                  "| 本报告范围 | 只做 R9 显著性判定（不导出 trace，无 timer 差值表） | |", ""]
+        if diff.get("significance"):
+            lines += render_significance(diff["significance"])
+        lines += ["## 警告"]
         lines += ["- %s" % w for w in diff["warnings"]] or ["- （无）"]
         return "\n".join(lines) + "\n"
 
@@ -159,7 +268,12 @@ def render_md(diff):
               "| total_self_s | %s | %s |" % (a["total_self_s"], b["total_self_s"]),
               "| 等待类合计 | %ss (%s%%) | %ss (%s%%) |" % (a["wait_total"]["self_s"], a["wait_total"]["self_pct"],
                                                             b["wait_total"]["self_s"], b["wait_total"]["self_pct"]),
+              "| 组内 run 数 / 代表 run | %s / %s | %s / %s |" % (a.get("group_n"), a.get("representative"),
+                                                              b.get("group_n"), b.get("representative")),
               ""]
+    sig = diff.get("significance")
+    if sig:
+        lines += render_significance(sig)
     lines += ["## Top 自耗时差值（A / B 各自 Top%d 的并集，|Δ| 降序）" % DIFF_TOP,
               "| timer | A self_s | B self_s | Δself_s | A% | B% | calls A→B |", "|---|---|---|---|---|---|---|"]
     lines += ["| %s | %s | %s | %+s | %s | %s | %s→%s |" % (
@@ -188,6 +302,35 @@ def render_md(diff):
     return "\n".join(lines) + "\n"
 
 
+def render_significance(sig):
+    """R9 段落：组统计表 + 阈值 + 结论。"""
+    ga, gb = sig["groups"]["a"], sig["groups"]["b"]
+    lines = ["## 显著性（R9：每组 n ≥ 5、组内 CV < 3%、Welch 阈值）", "",
+             "指标：%s（%s 侧，R15 用 interval 不用 duration）" % (sig.get("metric"), sig.get("metric_side")),
+             "", "| 组 | n | 各 run p50 (ms) | median | mean | std | CV% |", "|---|---|---|---|---|---|---|"]
+    for name, g in (("A", ga), ("B", gb)):
+        lines.append("| %s | %d | %s | %s | %s | %s | %s |" % (
+            name, g["n"], ", ".join("%.3f" % v for v in g["values"]) or "-",
+            "-" if g["median"] is None else "%.3f" % g["median"],
+            "-" if g["mean"] is None else "%.3f" % g["mean"],
+            "-" if g["std"] is None else "%.3f" % g["std"],
+            "-" if g["cv_pct"] is None else "%.2f%%" % g["cv_pct"]))
+    lines.append("")
+    if sig.get("delta_mean") is not None:
+        w = sig["welch"]
+        lines += [
+            "Δmean = %+.3f ms，Δmedian = %+.3f ms" % (sig["delta_mean"], sig["delta_median"]),
+            "阈值 = max(0.5 ms, t × SE) = **%.3f ms**（SE=%.3f，Welch df=%s，t97.5=%s）"
+            % (sig["threshold"], w["se"], w["df"], w["t_975"]),
+            "MDE（80%% 检出率）= %.3f ms —— 比这更小的真实差异测不出来" % sig["mde_80"],
+            "",
+            "**结论：%s**" % significance.verdict_short(sig), ""]
+    for note in sig.get("notes") or []:
+        lines.append("- %s" % note)
+    lines.append("")
+    return lines
+
+
 def fmt_range(window):
     return "none" if window is None else "[%.4f, %.4f]" % (window[0], window[1])
 
@@ -199,11 +342,18 @@ def fmt_bridge(effective):
 def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):  # PLAN 7.4 E4: UTF-8 output without relying on PYTHONUTF8
         stream.reconfigure(encoding="utf-8", errors="replace")
-    ap = argparse.ArgumentParser(description="perf_diff v0：两个 run 的 cpu 对比（PLAN §3）")
-    ap.add_argument("run_a", help="A 侧 run 目录（含 manifest.json）")
-    ap.add_argument("run_b", help="B 侧 run 目录（含 manifest.json）")
+    ap = argparse.ArgumentParser(description="perf_diff：两组 run 的 cpu 对比（PLAN §3、R9）")
+    ap.add_argument("runs", nargs="*", help="兼容写法：<run_a> <run_b>（每组一个 run）")
+    ap.add_argument("-a", "--group-a", nargs="+", default=None,
+                    help="A 组 run 目录（可多个；与 -b 一起用时取代位置参数）")
+    ap.add_argument("-b", "--group-b", nargs="+", default=None,
+                    help="B 组 run 目录（R9 判定要求每组 ≥ 5 个）")
     ap.add_argument("--out", required=True, help="输出目录（必填，P7）")
     ap.add_argument("--thread", default="GameThread", help="统计哪个线程（默认 GameThread）")
+    ap.add_argument("--metric-side", default="game", choices=("game", "render"),
+                    help="R9 用哪一侧的帧间隔 p50（默认 game）")
+    ap.add_argument("--significance-only", action="store_true",
+                    help="只做 R9 判定：只读 manifest 的 p50，不导出 trace（CI 门槛）")
     ap.add_argument("--trace-a", default=None, help="A 侧 trace（默认 manifest.trace.file，再退 <run_a>/trace.utrace）")
     ap.add_argument("--trace-b", default=None, help="B 侧 trace（同上）")
     ap.add_argument("--manifest-a", default=None, help="A 侧 manifest（默认 <run_a>/manifest.json）")
@@ -211,31 +361,60 @@ def main(argv=None) -> int:
     ap.add_argument("--ue-root", default=None, help="窗口导出使用的 UE 根目录")
     args = ap.parse_args(argv)
 
-    sides = {}
-    for key, run_dir, trace_arg, manifest_arg in (
-            ("a", args.run_a, args.trace_a, args.manifest_a),
-            ("b", args.run_b, args.trace_b, args.manifest_b)):
-        run_dir = os.path.abspath(run_dir)
-        manifest_path = manifest_arg or os.path.join(run_dir, "manifest.json")
-        if not os.path.isfile(manifest_path):
-            print("[error] %s: manifest not found: %s（先运行 perfctl manifest <run_dir>）" % (key, manifest_path))
-            return 1
-        with open(manifest_path, encoding="utf-8") as f:
-            manifest = json.load(f)
-        trace = run_digest.resolve(run_dir, trace_arg or manifest.get("trace", {}).get("file"), "trace.utrace")
-        if manifest.get("measurable", False) and not os.path.isfile(trace):
-            print("[error] %s: trace not found: %s" % (key, trace))
-            return 1
-        sides[key] = {"run_dir": run_dir, "manifest": manifest, "trace": trace}
+    if args.group_a and args.group_b:
+        group_a, group_b = list(args.group_a), list(args.group_b)
+    elif args.group_a or args.group_b:
+        print("[error] -a 与 -b 必须成对给出")
+        return 2
+    elif len(args.runs) == 2:
+        group_a, group_b = [args.runs[0]], [args.runs[1]]
+    else:
+        print("[error] 用法：perfctl diff cpu <run_a> <run_b> --out DIR")
+        print("      或：perfctl diff cpu -a R1 R2 R3 R4 R5 -b R6 R7 R8 R9 R10 --out DIR")
+        return 2
 
-    diff, md = build_diff(sides["a"], sides["b"], args.thread, args.ue_root)
+    def load(run_dirs, key, trace_arg, manifest_arg):
+        sides = []
+        require_trace = not args.significance_only
+        for run_dir in run_dirs:
+            run_dir = os.path.abspath(run_dir)
+            manifest_path = manifest_arg or os.path.join(run_dir, "manifest.json")
+            if not os.path.isfile(manifest_path):
+                print("[error] %s: manifest not found: %s（先运行 perfctl manifest <run_dir>）"
+                      % (key, manifest_path))
+                return None
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+            trace = run_digest.resolve(run_dir, trace_arg or manifest.get("trace", {}).get("file"), "trace.utrace")
+            if require_trace and manifest.get("measurable", False) and not os.path.isfile(trace):
+                print("[error] %s: trace not found: %s（只做 R9 可加 --significance-only）" % (key, trace))
+                return None
+            sides.append({"run_dir": run_dir, "manifest": manifest, "trace": trace})
+        return sides
+
+    sides_a = load(group_a, "a", args.trace_a, args.manifest_a)
+    sides_b = load(group_b, "b", args.trace_b, args.manifest_b) if sides_a else None
+    if not sides_a or not sides_b:
+        return 1
+
+    diff, md = build_group_diff(sides_a, sides_b, args.thread, args.ue_root, args.metric_side,
+                                timer_diff=not args.significance_only)
     os.makedirs(args.out, exist_ok=True)
-    with open(os.path.join(args.out, "perf_diff.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.out, "perf_diff.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(diff, f, ensure_ascii=False, indent=1)
-    with open(os.path.join(args.out, "perf_diff.md"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.out, "perf_diff.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write(md)
     print("[ok] %s" % os.path.join(os.path.abspath(args.out), "perf_diff.md"))
     print("  %s vs %s: %s" % (diff["sides"]["a"]["run_id"], diff["sides"]["b"]["run_id"], diff["capability"]))
+    sig = diff.get("significance")
+    if sig:
+        ga, gb = sig["groups"]["a"], sig["groups"]["b"]
+        print("  R9: n=%d/%d, CV=%s/%s, Δmean=%s, 阈值=%s, MDE=%s"
+              % (ga["n"], gb["n"],
+                 "-" if ga["cv_pct"] is None else "%.2f%%" % ga["cv_pct"],
+                 "-" if gb["cv_pct"] is None else "%.2f%%" % gb["cv_pct"],
+                 sig.get("delta_mean"), sig.get("threshold"), sig.get("mde_80")))
+        print("  %s" % significance.verdict_text(sig))
     for w in diff["warnings"]:
         print("  warning: %s" % w)
     return 0
