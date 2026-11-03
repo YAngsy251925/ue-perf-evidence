@@ -9,6 +9,8 @@ import unittest
 
 from pipeline.extract import b2
 
+A_HEADER = "Name,Count,C.Avg,Incl,I.Min,I.Max,I.Avg,I.Med,Excl,E.Min,E.Max,E.Avg,E.Med"
+
 
 def frames_payload(starts):
     frames = [{"idx": i, "start_ms": s, "end_ms": s + 10.0, "duration_ms": 10.0}
@@ -70,6 +72,58 @@ class CrossCheckTest(unittest.TestCase):
     def test_no_manifest_returns_none(self):
         self.assertIsNone(b2.manifest_beside(self.trace))
         self.assertIsNone(b2.cross_check({"game_frames": 1}, None))
+
+
+def timerstats_payload():
+    return {
+        "schema": "perf-b2-timerstats/0", "span_s": 32.0, "thread": "GameThread",
+        "totals": {"sum_self_s": 31.9, "sum_inclusive_s": 200.0, "timer_count": 1879},
+        "emitted": 3,
+        "timers": [
+            {"name": "PerfEvidenceRegress", "self_s": 26.584, "inclusive_s": 26.584, "calls": 12930},
+            {"name": "WaitForTasks", "self_s": 0.254, "inclusive_s": 0.254, "calls": 1282},
+            {"name": "FViewport_Draw", "self_s": 0.143, "inclusive_s": 0.143, "calls": 900},
+        ],
+    }
+
+
+def write_a_route(dir_path, rows):
+    """rows: [(name, incl, excl)]，写一份 A 路窗口导出 CSV。"""
+    path = os.path.join(dir_path, "a.csv")
+    lines = [A_HEADER]
+    for name, incl, excl in rows:
+        lines.append(",".join([name, "1", "1", "%.6f" % incl, "0", "0", "0", "0",
+                               "%.6f" % excl, "0", "0", "0", "0"]))
+    with io.open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+    return path
+
+
+class TimerStatsTest(unittest.TestCase):
+    def test_summary_coverage(self):
+        s = b2.summarize_timerstats(timerstats_payload())
+        self.assertEqual(s["timer_count"], 1879)
+        self.assertAlmostEqual(s["coverage_pct"], 99.688, places=3)
+        self.assertEqual(s["top"][0], "PerfEvidenceRegress")
+
+    def test_compare_matches_shared_names_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            csv_path = write_a_route(d, [
+                ("PerfEvidenceRegress", 26.584, 26.584),
+                ("FViewport_Draw", 0.143, 0.143),
+                ("SceneRender", 46.83, 18.58),   # 只在 A 路（Stats 区块视图），不参与对账
+            ])
+            comp = b2.compare_a_route(timerstats_payload(), csv_path)
+        self.assertTrue(comp["ok"])
+        self.assertEqual(comp["matched_n"], 2)
+        self.assertAlmostEqual(comp["worst_rel_pct"], 0.0, places=6)
+
+    def test_compare_flags_real_drift(self):
+        with tempfile.TemporaryDirectory() as d:
+            csv_path = write_a_route(d, [("PerfEvidenceRegress", 20.0, 20.0)])  # 差 33%
+            comp = b2.compare_a_route(timerstats_payload(), csv_path)
+        self.assertFalse(comp["ok"])
+        self.assertGreater(comp["worst_rel_pct"], 30.0)
 
 
 if __name__ == "__main__":

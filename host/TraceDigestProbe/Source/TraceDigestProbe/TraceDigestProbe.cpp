@@ -11,6 +11,8 @@
 #include "TraceServices/Model/TimingProfiler.h"
 #include "TraceServices/Model/Bookmarks.h"
 #include "TraceServices/Model/Frames.h"
+#include "TraceServices/Model/Threads.h"
+#include "TraceServices/Containers/Timelines.h"
 #include "Misc/FileHelper.h"
 #endif
 #if CSV_PROFILER
@@ -514,6 +516,188 @@ static void EmitTimers(const TraceServices::IAnalysisSession& Session, FOutputDe
 	Ar.Logf(TEXT("PERF_TIMERS count=%u emitted=%u"), TimerCount, Emitted);
 }
 
+// timerstats：按时间窗口聚合每个 CPU timer 的 calls / self / inclusive（M4.2 第 2 步）。
+// 自耗时用"深度栈"算：同一 timeline 的事件按开始时间前序到达，且每个回调自带 [Begin, End]，
+// 所以栈里存住自己的 End；子事件收尾时把整段时长加回父事件的 ChildSum，
+// 父事件收尾时 self = 整段 - ChildSum。线程过滤：先在线程表里按名字找 ThreadId，
+// 再用 GetCpuThreadTimelineIndex 定位 timeline。
+static void EmitTimerStats(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
+	const FString& TracePath, const FString& OutPath, double WindowStart, double WindowEnd,
+	const FString& ThreadName, int32 Limit)
+{
+	const TraceServices::ITimingProfilerProvider* Timing = TraceServices::ReadTimingProfilerProvider(Session);
+	if (!Timing) { Ar.Logf(TEXT("PERF_ERR no timing profiler provider")); return; }
+	const TraceServices::ITimingProfilerTimerReader& Reader = Timing->GetTimerReader();
+
+	if (WindowEnd <= 0.0)
+	{
+		WindowEnd = Session.GetDurationSeconds();
+	}
+	const double Span = FMath::Max(0.0, WindowEnd - WindowStart);
+
+	struct FAccum
+	{
+		int64 Calls = 0;
+		double Inclusive = 0.0;
+		double Self = 0.0;
+	};
+	TMap<uint32, FAccum> Acc; // key = TimerIndex（GetTimer(i) 的索引域）
+	Acc.Reserve(8192);
+
+	auto AggregateTimeline = [&Acc](const TraceServices::ITimingProfilerProvider::Timeline& Timeline,
+		double Start, double End)
+	{
+		struct FOpen
+		{
+			uint32 TimerIndex = 0;
+			double Begin = 0.0;
+			double End = 0.0;
+			double ChildSum = 0.0;
+		};
+		TArray<FOpen> Open;
+		Open.Reserve(64);
+
+		auto CloseTop = [&Acc, &Open]()
+		{
+			if (Open.Num() == 0)
+			{
+				return;
+			}
+			const FOpen Top = Open.Pop();
+			const double Duration = FMath::Max(0.0, Top.End - Top.Begin);
+			FAccum& Slot = Acc.FindOrAdd(Top.TimerIndex);
+			Slot.Inclusive += Duration;
+			Slot.Self += FMath::Max(0.0, Duration - Top.ChildSum);
+			if (Open.Num() > 0)
+			{
+				Open.Last().ChildSum += Duration;
+			}
+		};
+
+		Timeline.EnumerateEvents(Start, End,
+			[&Acc, &Open, &CloseTop](double EventStart, double EventEnd, uint32 Depth,
+				const TraceServices::FTimingProfilerEvent& Event) -> TraceServices::EEventEnumerate
+			{
+				// 前序到达：深度 >= 当前深度的已开事件都已完整，先收尾
+				while (Open.Num() > (int32)Depth)
+				{
+					CloseTop();
+				}
+				FOpen New;
+				New.TimerIndex = Event.TimerIndex;
+				New.Begin = EventStart;
+				New.End = EventEnd;
+				Open.Push(New);
+				Acc.FindOrAdd(Event.TimerIndex).Calls += 1;
+				return TraceServices::EEventEnumerate::Continue;
+			});
+
+		while (Open.Num() > 0)
+		{
+			CloseTop();
+		}
+	};
+
+	// 定位 timeline：给了 -thread 就必须找到；找不到直接报错，不静默降级
+	FString UsedThread = ThreadName;
+	uint32 UsedThreadId = 0;
+	if (!ThreadName.IsEmpty())
+	{
+		const TraceServices::IThreadProvider& Threads = TraceServices::ReadThreadProvider(Session);
+		Threads.EnumerateThreads([&](const TraceServices::FThreadInfo& Info)
+		{
+			if (ThreadName.Equals(FString(Info.Name), ESearchCase::IgnoreCase))
+			{
+				UsedThreadId = Info.Id;
+			}
+		});
+		if (UsedThreadId == 0)
+		{
+			Ar.Logf(TEXT("PERF_ERR thread not found: %s"), *ThreadName);
+			return;
+		}
+		uint32 TimelineIndex = 0;
+		if (!Timing->GetCpuThreadTimelineIndex(UsedThreadId, TimelineIndex))
+		{
+			Ar.Logf(TEXT("PERF_ERR no cpu timeline for thread %s (id=%u)"), *ThreadName, UsedThreadId);
+			return;
+		}
+		Timing->ReadTimeline(TimelineIndex, [&](const TraceServices::ITimingProfilerProvider::Timeline& TL)
+		{
+			AggregateTimeline(TL, WindowStart, WindowEnd);
+		});
+	}
+	else
+	{
+		Ar.Logf(TEXT("PERF_ERR -thread=<名字> 必填（不给会把 GPU timeline 混进 CPU 聚合）"));
+		return;
+	}
+
+	// 汇总
+	double SumSelf = 0.0;
+	double SumInclusive = 0.0;
+	for (const TPair<uint32, FAccum>& Pair : Acc)
+	{
+		SumSelf += Pair.Value.Self;
+		SumInclusive += Pair.Value.Inclusive;
+	}
+
+	TArray<TPair<uint32, FAccum>> Rows;
+	Rows.Reserve(Acc.Num());
+	for (const TPair<uint32, FAccum>& Pair : Acc)
+	{
+		Rows.Add(Pair);
+	}
+	Rows.Sort([](const TPair<uint32, FAccum>& A, const TPair<uint32, FAccum>& B)
+	{
+		return A.Value.Self > B.Value.Self;
+	});
+
+	FString Out = FString::Printf(
+		TEXT("{\"schema\":\"perf-b2-timerstats/0\",\"trace\":\"%s\",")
+		TEXT("\"window\":[%.6f,%.6f],\"span_s\":%.6f,\"thread\":\"%s\",\"thread_id\":%u,")
+		TEXT("\"totals\":{\"sum_self_s\":%.6f,\"sum_inclusive_s\":%.6f,\"timer_count\":%d},")
+		TEXT("\"timers\":["),
+		*JsonEscape(*TracePath), WindowStart, WindowEnd, Span, *JsonEscape(*UsedThread), UsedThreadId,
+		SumSelf, SumInclusive, Acc.Num());
+
+	int32 Emitted = 0;
+	for (const TPair<uint32, FAccum>& Pair : Rows)
+	{
+		if (Limit > 0 && Emitted >= Limit)
+		{
+			break;
+		}
+		const TraceServices::FTimingProfilerTimer* Timer = Reader.GetTimer(Pair.Key);
+		const TCHAR* Name = (Timer && Timer->Name) ? Timer->Name : TEXT("<unknown>");
+		const uint32 TimerId = Timer ? Timer->Id : 0u;
+		if (Emitted > 0) { Out += TEXT(","); }
+		Out += FString::Printf(
+			TEXT("{\"index\":%u,\"id\":%u,\"name\":\"%s\",\"calls\":%lld,")
+			TEXT("\"self_s\":%.6f,\"inclusive_s\":%.6f,\"self_pct_window\":%.4f,\"self_pct_sum\":%.4f}"),
+			Pair.Key, TimerId, *JsonEscape(Name), Pair.Value.Calls,
+			Pair.Value.Self, Pair.Value.Inclusive,
+			Span > 0.0 ? 100.0 * Pair.Value.Self / Span : 0.0,
+			SumSelf > 0.0 ? 100.0 * Pair.Value.Self / SumSelf : 0.0);
+		++Emitted;
+	}
+	Out += FString::Printf(TEXT("],\"emitted\":%d}"), Emitted);
+
+	if (!OutPath.IsEmpty())
+	{
+		if (FFileHelper::SaveStringToFile(Out, *OutPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		{
+			Ar.Logf(TEXT("PERF_OUT %s"), *OutPath);
+		}
+		else
+		{
+			Ar.Logf(TEXT("PERF_ERR write failed: %s"), *OutPath);
+		}
+	}
+	Ar.Logf(TEXT("PERF_TIMERSTATS thread=%s timers=%d emitted=%d sum_self=%.3fs span=%.3fs"),
+		*UsedThread, Acc.Num(), Emitted, SumSelf, Span);
+}
+
 // TraceDigestPerf 的实现（-run=TraceDigestPerf 经 UTraceDigestPerfCommandlet 进来）。
 //   mode 为空（默认）：输出 trace 里以 prefix 开头的书签（M2.2 的 coverage 边界，capture.py 在用）
 //   mode=frames      ：帧轨道（Game / Rendering 各一条，index/start/end/duration）
@@ -533,6 +717,17 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 			Limit = FCString::Atoi(*LimitText);
 		}
 	}
+	double WindowStart = 0.0;
+	{
+		const FString Text = ParseArg(Params, TEXT("start"));
+		if (!Text.IsEmpty()) { WindowStart = FCString::Atod(*Text); }
+	}
+	double WindowEnd = 0.0;
+	{
+		const FString Text = ParseArg(Params, TEXT("end"));
+		if (!Text.IsEmpty()) { WindowEnd = FCString::Atod(*Text); }
+	}
+	const FString ThreadName = ParseArg(Params, TEXT("thread"));
 	if (TracePath.IsEmpty()) { Ar.Logf(TEXT("PERF_ERR missing trace=<file>")); return; }
 
 	ITraceServicesModule& Module = FModuleManager::LoadModuleChecked<ITraceServicesModule>(TEXT("TraceServices"));
@@ -554,6 +749,12 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	if (Mode == TEXT("timers"))
 	{
 		EmitTimers(*Session, Ar, TracePath, OutPath, Limit);
+		Ar.Logf(TEXT("PERF_DONE"));
+		return;
+	}
+	if (Mode == TEXT("timerstats"))
+	{
+		EmitTimerStats(*Session, Ar, TracePath, OutPath, WindowStart, WindowEnd, ThreadName, Limit);
 		Ar.Logf(TEXT("PERF_DONE"));
 		return;
 	}
