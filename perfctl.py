@@ -14,6 +14,7 @@
   python perfctl.py digest config <run_dir> --out DIR                              # cvar/scalability 快照（M5.5）
   python perfctl.py digest memory <run_dir> --out DIR [--top N]                    # 内存视图（M6.1，MemReport）
   python perfctl.py digest allocs <run_dir|csv> --out DIR [--rule aAf] [--top N]    # 分配视图（M6.2，A 路 ExportAllocs）
+  python perfctl.py digest load <run_dir> --out DIR [--b2] [--top N]                # 加载视图（M6.3，包级 Top-N）
   python perfctl.py digest hitch  <run_dir> --out DIR                            # hitch 视图（M2.3/M2.4）
   python perfctl.py diff cpu      <run_a> <run_b> --out DIR [--trace-a F] [--trace-b F]  # v0（M1.6）
   python perfctl.py manifest      <run_dir> [--log FILE] [--extract DIR] [--trace FILE] [--out FILE]
@@ -32,7 +33,8 @@ import sys
 from pipeline.capture import capture, profile, session
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
-from pipeline.digest.views import allocations, bound, config, cpu, crosscheck, gpu, hitch, memory, single_frame
+from pipeline.digest.views import (allocations, bound, config, cpu, crosscheck, gpu, hitch, load,
+                                   memory, single_frame)
 from pipeline.digest import runs
 from pipeline.extract import b2, insights_export
 
@@ -64,6 +66,8 @@ def main(argv=None) -> int:
             return memory.main(rest[1:])
         if rest[:1] == ["allocs"]:
             return allocations.main(rest[1:])
+        if rest[:1] == ["load"]:
+            return load.main(rest[1:])
         if rest[:1] != ["cpu"]:
             print("usage: perfctl digest cpu <run_dir|stats.csv> --out DIR\n"
                   "       perfctl digest gpu <run_dir> --out DIR [--b2]\n"

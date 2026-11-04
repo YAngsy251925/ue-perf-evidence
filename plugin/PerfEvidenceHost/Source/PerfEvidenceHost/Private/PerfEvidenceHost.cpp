@@ -89,73 +89,72 @@ private:
 //   "PerfEvidence.ExecAt=12:stat none"（引号在键前、闭合引号在整段末尾），
 // 所以不能靠 FParse::Value（它只认"键前是空白"），也不能简单剥引号（值会在空格处截断）。
 // 这里直接定位键，再按"是否被引号包裹"决定读到哪个字符。
-static bool PerfEvidenceReadExecAt(FString& OutValue)
+static FString PerfEvidenceReadExecAt(const TCHAR* InKey)
 {
+	FString OutValue;
 	const FString Line = FCommandLine::Get();
-	const FString Key = TEXT("PerfEvidence.ExecAt=");
+	const FString Key = InKey;
 	const int32 KeyAt = Line.Find(Key, ESearchCase::IgnoreCase, ESearchDir::FromStart);
 	if (KeyAt == INDEX_NONE)
 	{
-		return false;
+		return FString();
 	}
 	int32 Start = KeyAt + Key.Len();
 	if (Start >= Line.Len())
 	{
-		return false;
+		return FString();
 	}
 	if (Line[Start] == TEXT('"'))
 	{
 		const int32 End = Line.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, Start + 1);
-		if (End == INDEX_NONE) { return false; }
-		OutValue = Line.Mid(Start + 1, End - Start - 1);
-		return true;
+		if (End == INDEX_NONE) { return FString(); }
+		return Line.Mid(Start + 1, End - Start - 1);
 	}
 	if (KeyAt > 0 && Line[KeyAt - 1] == TEXT('"'))
 	{
 		const int32 End = Line.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, Start);
 		if (End == INDEX_NONE)
 		{
-			OutValue = Line.Mid(Start);
-			return true;
+			return Line.Mid(Start);
 		}
-		OutValue = Line.Mid(Start, End - Start);
-		return true;
+		return Line.Mid(Start, End - Start);
 	}
 	int32 End = Start;
 	while (End < Line.Len() && !FChar::IsWhitespace(Line[End])) { ++End; }
-	OutValue = Line.Mid(Start, End - Start);
-	return true;
+	return Line.Mid(Start, End - Start);
 }
 
 static void PerfEvidenceScheduleExecAt()
 {
-	FString ExecAt;
-	if (!PerfEvidenceReadExecAt(ExecAt))
+	auto ScheduleOne = [](const FString& Spec, const TCHAR* Slot)
 	{
-		return;
-	}
-	int32 Sep = INDEX_NONE;
-	if (!ExecAt.FindChar(TEXT(':'), Sep))
-	{
-		return;
-	}
-	const double DelaySeconds = FCString::Atod(*ExecAt.Left(Sep));
-	const FString Command = ExecAt.Mid(Sep + 1).TrimStartAndEnd();
-	if (DelaySeconds <= 0.0 || Command.IsEmpty())
-	{
-		return;
-	}
-	FTSTicker::GetCoreTicker().AddTicker(TEXT("PerfEvidenceExecAt"), float(DelaySeconds),
-		[Command](float)
+		int32 Sep = INDEX_NONE;
+		if (Spec.IsEmpty() || !Spec.FindChar(TEXT(':'), Sep))
 		{
-			UE_LOGF(LogTemp, Display, "PerfEvidence: queueing exec [%ls]", *Command);
-			if (GEngine)
+			return;
+		}
+		const double DelaySeconds = FCString::Atod(*Spec.Left(Sep));
+		const FString Command = Spec.Mid(Sep + 1).TrimStartAndEnd();
+		if (DelaySeconds <= 0.0 || Command.IsEmpty())
+		{
+			return;
+		}
+		FTSTicker::GetCoreTicker().AddTicker(TEXT("PerfEvidenceExecAt"), float(DelaySeconds),
+			[Command](float)
 			{
-				GEngine->DeferredCommands.Add(Command);
-			}
-			return false; // one-shot
-		});
-	UE_LOGF(LogTemp, Display, "PerfEvidence: ExecAt scheduled at %.1fs [%ls]", DelaySeconds, *Command);
+				UE_LOGF(LogTemp, Display, "PerfEvidence: queueing exec [%ls]", *Command);
+				if (GEngine)
+				{
+					GEngine->DeferredCommands.Add(Command);
+				}
+				return false; // one-shot
+			});
+		UE_LOGF(LogTemp, Display, "PerfEvidence: ExecAt%ls scheduled at %.1fs [%ls]", Slot,
+			DelaySeconds, *Command);
+	};
+	// 两个槽：常规注入用 ExecAt，需要"开图 + 退出"这类成对动作时用 ExecAt2（M6.3 编辑器验证）
+	ScheduleOne(PerfEvidenceReadExecAt(TEXT("PerfEvidence.ExecAt=")), TEXT(""));
+	ScheduleOne(PerfEvidenceReadExecAt(TEXT("PerfEvidence.ExecAt2=")), TEXT("2"));
 }
 
 #if CSV_PROFILER

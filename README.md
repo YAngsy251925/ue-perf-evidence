@@ -70,6 +70,9 @@ python perfctl.py capture harness/profiles/memory.json runs/<id>     # memreport
 python perfctl.py digest memory runs/<id> --out runs/<id>/mem
 python perfctl.py digest allocs runs/<id> --out runs/<id>/allocs --rule aAf --max 20000   # 需要 trace 带 memory 通道
 
+# 加载（M6.3）：包级 Top-N（需要在 profile 的 trace.channels 里带 loadtime）
+python perfctl.py digest load runs/<id> --out runs/<id>/load --b2
+
 # 配置快照（M5.5）：cvar（ExecCmds + LogConfig 两个源）与 scalability 档位，对账 profile 声明
 python perfctl.py digest config runs/<id> --out runs/<id>/config
 

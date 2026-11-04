@@ -6,6 +6,7 @@
 #include "Engine/Engine.h"
 #if WITH_EDITOR
 #include "TraceServices/ITraceServicesModule.h"
+#include "TraceServices/ModuleService.h"
 #include "TraceServices/AnalysisService.h"
 #include "TraceServices/Model/AnalysisSession.h"
 #include "TraceServices/Model/TimingProfiler.h"
@@ -25,6 +26,26 @@
 #include "TraceServices/Containers/Tables.h"
 #include "Misc/FileHelper.h"
 #endif
+
+#if WITH_EDITOR
+// 启用默认关闭的 TraceServices 分析模块（M6.3 的关键发现）：
+// `FLoadTimeProfilerModule` / `FTasksModule` / `FCookProfilerModule` 的 ShouldBeEnabledByDefault() 返回 false，
+// 只有 UnrealInsights 会显式 SetModuleEnabled。不打开的话 ReadLoadTimeProfilerProvider / ReadTasksProvider
+// 永远返回 null——即使 trace 里真有事件（我们用公开宏造了 45 条 LoadTime 事件验证过）。
+static void EnableAnalysisModules()
+{
+	ITraceServicesModule& SvcModule = FModuleManager::LoadModuleChecked<ITraceServicesModule>(TEXT("TraceServices"));
+	TSharedPtr<TraceServices::IModuleService> Modules = SvcModule.GetModuleService();
+	if (!Modules.IsValid()) { Modules = SvcModule.CreateModuleService(); }
+	if (!Modules.IsValid()) { return; }
+	for (const TCHAR* Name : { TEXT("TraceModule_LoadTimeProfiler"), TEXT("TraceModule_Tasks"),
+							   TEXT("TraceModule_CookProfiler") })
+	{
+		Modules->SetModuleEnabled(FName(Name), true);
+	}
+}
+#endif
+
 #if CSV_PROFILER
 #include "ProfilingDebugging/CsvProfiler.h"
 #endif
@@ -403,6 +424,7 @@ static void RunTraceDigest(const TArray<FString>& Args, UWorld*, FOutputDevice& 
 	if (!Service.IsValid()) { Service = Module.CreateAnalysisService(); }
 	if (!Service.IsValid()) { Ar.Logf(TEXT("DIGEST_ERR no analysis service")); return; }
 
+	EnableAnalysisModules();
 	TSharedPtr<const TraceServices::IAnalysisSession> Session = Service->Analyze(*TracePath);
 	if (!Session.IsValid()) { Ar.Logf(TEXT("DIGEST_ERR analyze failed")); return; }
 	Session->Wait();
@@ -465,6 +487,64 @@ static FString ParseUnquoted(const FString& Params, const TCHAR* Key)
 	FParse::Value(*Clean, Key, Value);
 	return Value;
 }
+
+// ---------------------------------------------------------------- M6.3 LoadTime 探针
+// 用 Core 的**公开**宏在 trace 里造一条真实的 LoadTime 事件（RequestGroup）。
+// 目的：验证 B2 的 load 读取链路本身可用——这台引擎的 -game/editor 场景都不写 LoadTime 事件
+// （通道 enabled 但 analyzer 模块没被激活），所以只能自己造一条。
+// cvar PerfEvidence.LoadTimeProbe=1 打开；每 1s 开一个 5ms 的 request group scope。
+#if !UE_BUILD_SHIPPING
+#include "Serialization/LoadTimeTrace.h"
+#include "TraceServices/ModuleService.h"
+static TAutoConsoleVariable<int32> CVarPerfLoadTimeProbe(
+	TEXT("PerfEvidence.LoadTimeProbe"), 0,
+	TEXT("M6.3 验证：每帧定时发一条 LoadTime RequestGroup 事件（0=关闭）"),
+	ECVF_Cheat);
+
+class FPerfEvidenceLoadTimeProbe : public FTickableGameObject
+{
+public:
+	virtual void Tick(float DeltaTime) override
+	{
+		if (CVarPerfLoadTimeProbe.GetValueOnGameThread() == 0)
+		{
+			Accum += DeltaTime;
+			return;
+		}
+		Accum += DeltaTime;
+		if (Accum < 1.0)
+		{
+			return;
+		}
+		Accum = 0.0;
+		{
+			TRACE_LOADTIME_REQUEST_GROUP_SCOPE(TEXT("PerfEvidenceProbe_%.1fms"), 5.0);
+			const double End = FPlatformTime::Seconds() + 0.005;
+			while (FPlatformTime::Seconds() < End) { /* 5ms */ }
+		}
+		UE_LOGF(LogTemp, Display, "PerfEvidence: emitted LoadTime RequestGroup event");
+	}
+	virtual TStatId GetStatId() const override
+	{
+		RETURN_QUICK_DECLARE_CYCLE_STAT(FPerfEvidenceLoadTimeProbe, STATGROUP_Tickables);
+	}
+private:
+	double Accum = 0.0;
+};
+static struct FPerfEvidenceLoadTimeProbeInit
+{
+	FPerfEvidenceLoadTimeProbeInit()
+	{
+		FTSTicker::GetCoreTicker().AddTicker(TEXT("PerfEvidenceLoadTimeProbeBoot"), 0.0f,
+			[](float)
+			{
+				new FPerfEvidenceLoadTimeProbe();
+				UE_LOGF(LogTemp, Display, "PerfEvidence: loadtime probe up (cvar PerfEvidence.LoadTimeProbe)");
+				return false;
+			});
+	}
+} GPerfEvidenceLoadTimeProbeInit;
+#endif // !UE_BUILD_SHIPPING
 
 // ---------------------------------------------------------------- M4.2 深度读取
 // 移植自 ue-trace-mcp（Unlicense，bf73c60）的 frames / timers 两个 mode，改成 5.8 API：
@@ -1732,6 +1812,7 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	if (!Service.IsValid()) { Service = Module.CreateAnalysisService(); }
 	if (!Service.IsValid()) { Ar.Logf(TEXT("PERF_ERR no analysis service")); return; }
 
+	EnableAnalysisModules();
 	TSharedPtr<const TraceServices::IAnalysisSession> Session = Service->Analyze(*TracePath);
 	if (!Session.IsValid()) { Ar.Logf(TEXT("PERF_ERR analyze failed")); return; }
 	Session->Wait();
