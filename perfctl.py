@@ -15,6 +15,7 @@
   python perfctl.py digest memory <run_dir> --out DIR [--top N]                    # 内存视图（M6.1，MemReport）
   python perfctl.py digest allocs <run_dir|csv> --out DIR [--rule aAf] [--top N]    # 分配视图（M6.2，A 路 ExportAllocs）
   python perfctl.py digest load <run_dir> --out DIR [--b2] [--top N]                # 加载视图（M6.3，包级 Top-N）
+  python perfctl.py advise <run_dir> --out DIR [--catalog catalog/cvars.json] [--budget-ms 16.67]  # 证据驱动的优化假设
   python perfctl.py evidence <run_dir> --ref "timer:Name@stats|frame:N|hitch:K" --out DIR [--page N] [--limit N]  # 原始证据行（perf_evidence）
   python perfctl.py digest hitch  <run_dir> --out DIR                            # hitch 视图（M2.3/M2.4）
   python perfctl.py diff cpu      <run_a> <run_b> --out DIR [--trace-a F] [--trace-b F]  # v0（M1.6）
@@ -33,6 +34,7 @@ UE 根目录：--ue-root 或环境变量 UE_ROOT。
 import os
 import sys
 
+from pipeline.advice import advisor
 from pipeline.capture import auto, capture, ingest, profile, session
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
@@ -52,6 +54,8 @@ def main(argv=None) -> int:
     group, rest = argv[0], argv[1:]
     if group == "export":
         return insights_export.main(rest)
+    if group == "advise":
+        return advisor.main(rest)
     if group == "ingest":
         return ingest.main(rest)
     if group == "auto":

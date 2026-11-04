@@ -20,6 +20,7 @@ UE 5.8 上、面向 AI agent 的**性能证据管线**：从一次采集（trace
 | 内存谁占 | `perfctl digest memory <run> --out DIR`、`digest allocs` | MemReport 结构化 + 分配 Tag/Class/Package Top-N |
 | 加载慢在哪个包 | `perfctl digest load <run> --out DIR --b2` | 包级 Top-N（count/total/max/avg） |
 | 是不是配置问题 | `perfctl digest config <run> --out DIR` | cvar（双证据源）+ scalability + 声明对账 |
+| **在哪儿优化、预期多少** | `perfctl advise <run> --out DIR` | 证据驱动的假设：份额/饱和/fence + 本机引擎 cvar（含 file:line）+ 预期收益 + 证伪条件 |
 | 变快了还是变慢了 | `perfctl diff cpu -a … -b … --out DIR [--fail-on regression]` | R9：n / CV / 阈值 / MDE / 退出码 |
 | 那条结论的原始行在哪 | `perfctl evidence <run> --ref "timer:Name@stats｜frame:N｜hitch:K"` | 分页证据行（带翻页提示） |
 | 引擎自报 vs 我们推导 | `perfctl digest bound <run> --sampler` | 采样器校准段（GT/RT/GPU 偏差） |
@@ -104,7 +105,8 @@ workflow 模板在 [docs/ci/perf-gate.yml](docs/ci/perf-gate.yml)（**本仓库 
 | `harness/profiles/` | 采集 profile（smoke / measure / hitch-hunt / memory / measure_sampler / lyra_*） |
 | `golden/` | 口径回归基线（重放 `tests/test_golden.py`，生成 `tests/make_golden.py`） |
 | `tests/` | 304 条单测与验收测试（验收数据不在本机时自动跳过） |
-| `tools/` | `check_text.py`（编码检查）、`pack_manifests.py`（CI 瘦包）、`mcp_probe.py`、`backfill_csv.py` |
+| `tools/` | `check_text.py`（编码检查）、`pack_manifests.py`（CI 瘦包）、`scan_cvars.py`（扫本机引擎生成杠杆目录）、`session_cost.py`（token 成本）、`mcp_probe.py`、`backfill_csv.py` |
+| `pipeline/advice/` | 建议层：证据 → 可调开关 → 预期收益 → 证伪条件（见 [docs/ADVISOR.md](docs/ADVISOR.md)） |
 
 ## 已知限制
 
