@@ -631,6 +631,13 @@ static struct FPerfEvidenceLoadTimeProbeInit
 // timers 走 GetTimerReader()（ReadTimers 在 5.8 已弃用，见 docs/M4_1_API_DIFF.md A1）。
 // 输出是手写 JSON（不引 Json 模块，保持依赖最少），写 -out=<file>；不写就打到日志。
 
+// MSVC 把 NaN/inf 打成 "-nan(ind)"/"inf"，那不是合法 JSON（Python 的 json 会直接炸）。
+// 编辑器 trace 末尾常留一个未闭合 scope（End=+inf），所以所有导出数字都过这个闸：非有限值按 R13 记 0。
+static double Fin(double Value)
+{
+	return FMath::IsFinite(Value) ? Value : 0.0;
+}
+
 static FString JsonEscape(const TCHAR* Text)
 {
 	if (!Text) { return FString(); }
@@ -781,6 +788,11 @@ static void EmitTimerStats(const TraceServices::IAnalysisSession& Session, FOutp
 				return;
 			}
 			const FOpen Top = Open.Pop();
+			// 未闭合 scope 的 End 可能是 +inf/NaN：这一条按 R13 丢弃，不参与累计
+			if (!FMath::IsFinite(Top.End) || !FMath::IsFinite(Top.Begin))
+			{
+				return;
+			}
 			const double Duration = FMath::Max(0.0, Top.End - Top.Begin);
 			FAccum& Slot = Acc.FindOrAdd(Top.TimerIndex);
 			Slot.Inclusive += Duration;
@@ -876,7 +888,7 @@ static void EmitTimerStats(const TraceServices::IAnalysisSession& Session, FOutp
 		TEXT("\"totals\":{\"sum_self_s\":%.6f,\"sum_inclusive_s\":%.6f,\"timer_count\":%d},")
 		TEXT("\"timers\":["),
 		*JsonEscape(*TracePath), WindowStart, WindowEnd, Span, *JsonEscape(*UsedThread), UsedThreadId,
-		SumSelf, SumInclusive, Acc.Num());
+		Fin(SumSelf), Fin(SumInclusive), Acc.Num());
 
 	int32 Emitted = 0;
 	for (const TPair<uint32, FAccum>& Pair : Rows)
@@ -893,9 +905,9 @@ static void EmitTimerStats(const TraceServices::IAnalysisSession& Session, FOutp
 			TEXT("{\"index\":%u,\"id\":%u,\"name\":\"%s\",\"calls\":%lld,")
 			TEXT("\"self_s\":%.6f,\"inclusive_s\":%.6f,\"self_pct_window\":%.4f,\"self_pct_sum\":%.4f}"),
 			Pair.Key, TimerId, *JsonEscape(Name), Pair.Value.Calls,
-			Pair.Value.Self, Pair.Value.Inclusive,
-			Span > 0.0 ? 100.0 * Pair.Value.Self / Span : 0.0,
-			SumSelf > 0.0 ? 100.0 * Pair.Value.Self / SumSelf : 0.0);
+			Fin(Pair.Value.Self), Fin(Pair.Value.Inclusive),
+			Span > 0.0 ? Fin(100.0 * Pair.Value.Self / Span) : 0.0,
+			SumSelf > 0.0 ? Fin(100.0 * Pair.Value.Self / SumSelf) : 0.0);
 		++Emitted;
 	}
 	Out += FString::Printf(TEXT("],\"emitted\":%d}"), Emitted);
