@@ -1698,6 +1698,102 @@ static void EmitFrameTree(const TraceServices::IAnalysisSession& Session, FOutpu
 // 注意：provider 只在 trace 里真有 LoadTime/PlatformFile 事件时才存在（TraceServices 按 logger 激活模块），
 // 所以 Lyra 前端这种"没有异步加载"的 run 上 ReadLoadTimeProfilerProvider 会返回 null —— 这时明确报错，
 // 不假装有数据。请求表是 ITable<FLoadRequest>，用 ITableReader 拿行指针。
+// calls：某个 timer 在窗口内的**逐次调用**（M6 之后补的证据下钻面：perf_evidence 的 timer ref）。
+// 输出按 start 稳定排序，带 page/page_size，便于分页取证据行。
+// 注意：要按 timer 名匹配，名字来自 GetTimerReader().GetTimer(idx)->Name；
+// 一帧内同名 scope 可能有很多次，所以这里不设上限地收集（上限用 MaxCalls 兜住内存），
+// 分页在 Python 侧做（JSON 里已经有全部行；限流靠 -limit 控制收集条数）。
+static void EmitTimerCalls(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
+	const FString& TracePath, const FString& OutPath, double WindowStart, double WindowEnd,
+	const FString& ThreadName, const FString& TimerName, int32 MaxCalls)
+{
+	const TraceServices::ITimingProfilerProvider* Timing = TraceServices::ReadTimingProfilerProvider(Session);
+	if (!Timing)
+	{
+		Ar.Logf(TEXT("PERF_ERR no timing profiler provider"));
+		return;
+	}
+	uint32 ThreadId = 0, TimelineIndex = 0;
+	if (!ResolveThreadTimeline(Session, *Timing, ThreadName, ThreadId, TimelineIndex))
+	{
+		Ar.Logf(TEXT("PERF_ERR no cpu timeline for thread %s"), *ThreadName);
+		return;
+	}
+	const TraceServices::ITimingProfilerTimerReader& Reader = Timing->GetTimerReader();
+	if (WindowEnd <= 0.0) { WindowEnd = Session.GetDurationSeconds(); }
+
+	struct FCall
+	{
+		double Begin = 0.0;
+		double End = 0.0;
+		int32 Depth = 0;
+		FString Name;
+	};
+	TArray<FCall> Calls;
+	int32 Matched = 0;
+	int32 TotalEvents = 0;
+	const int32 Cap = MaxCalls > 0 ? MaxCalls : 100000;
+
+	Timing->ReadTimeline(TimelineIndex,
+		[&](const TraceServices::ITimingProfilerProvider::Timeline& TL)
+		{
+			TL.EnumerateEvents(WindowStart, WindowEnd,
+				[&](double S, double E, uint32 Depth, const TraceServices::FTimingProfilerEvent& Ev)
+					-> TraceServices::EEventEnumerate
+				{
+					++TotalEvents;
+					const TraceServices::FTimingProfilerTimer* Timer = Reader.GetTimer(Ev.TimerIndex);
+					if (!Timer || !Timer->Name) { return TraceServices::EEventEnumerate::Continue; }
+					const FString Name(Timer->Name);
+					if (!Name.Equals(TimerName, ESearchCase::CaseSensitive))
+					{
+						if (!Name.Equals(TimerName, ESearchCase::IgnoreCase))
+						{
+							return TraceServices::EEventEnumerate::Continue;
+						}
+					}
+					++Matched;
+					if (Calls.Num() >= Cap) { return TraceServices::EEventEnumerate::Continue; }
+					FCall Row;
+					Row.Begin = S;
+					Row.End = E;
+					Row.Depth = (int32)Depth;
+					Row.Name = Name;
+					Calls.Add(Row);
+					return TraceServices::EEventEnumerate::Continue;
+				});
+		});
+
+	Calls.Sort([](const FCall& A, const FCall& B) { return A.Begin < B.Begin; });
+
+	double Sum = 0.0, Max = 0.0;
+	for (const FCall& Row : Calls)
+	{
+		const double D = FMath::Max(0.0, Row.End - Row.Begin);
+		Sum += D;
+		Max = FMath::Max(Max, D);
+	}
+
+	FString Out = FString::Printf(
+		TEXT("{\"schema\":\"perf-b2-calls/0\",\"trace\":\"%s\",\"thread\":\"%s\",\"timer\":\"%s\",")
+		TEXT("\"window\":[%.6f,%.6f],\"events_in_window\":%d,\"matched\":%d,\"collected\":%d,")
+		TEXT("\"truncated\":%s,\"sum_ms\":%.4f,\"max_ms\":%.4f,\"calls\":["),
+		*JsonEscape(*TracePath), *JsonEscape(*ThreadName), *JsonEscape(*TimerName),
+		WindowStart, WindowEnd, TotalEvents, Matched, Calls.Num(),
+		(Matched > Calls.Num()) ? TEXT("true") : TEXT("false"),
+		Sum * 1000.0, Max * 1000.0);
+	for (int32 i = 0; i < Calls.Num(); ++i)
+	{
+		if (i > 0) { Out += TEXT(","); }
+		Out += FString::Printf(TEXT("{\"start_s\":%.6f,\"dur_ms\":%.4f,\"depth\":%d}"),
+			Calls[i].Begin, (Calls[i].End - Calls[i].Begin) * 1000.0, Calls[i].Depth);
+	}
+	Out += TEXT("]}");
+	WriteJson(Ar, OutPath, Out);
+	Ar.Logf(TEXT("PERF_CALLS timer=%s matched=%d collected=%d sum=%.3fms max=%.3fms events=%d"),
+		*TimerName, Matched, Calls.Num(), Sum * 1000.0, Max * 1000.0, TotalEvents);
+}
+
 static void EmitLoadRows(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
 	const FString& TracePath, const FString& OutPath, double WindowStart, double WindowEnd, int32 Limit)
 {
@@ -1833,6 +1929,12 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	if (Mode == TEXT("frame"))
 	{
 		EmitFrameTree(*Session, Ar, TracePath, OutPath, FrameIndex, ThreadName, Limit);
+		Ar.Logf(TEXT("PERF_DONE"));
+		return;
+	}
+	if (Mode == TEXT("calls"))
+	{
+		EmitTimerCalls(*Session, Ar, TracePath, OutPath, WindowStart, WindowEnd, ThreadName, TimerName, Limit);
 		Ar.Logf(TEXT("PERF_DONE"));
 		return;
 	}

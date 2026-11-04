@@ -25,7 +25,7 @@ HOST_DIR = os.path.join(REPO, "host", "TraceDigestProbe")
 DEFAULT_UE_ROOT = r"D:\Epic\Games\UE_5.8"
 
 
-MODES = ("frames", "frame", "timers", "timerstats", "callers", "gpu", "counters", "regions",
+MODES = ("frames", "frame", "timers", "timerstats", "callers", "calls", "gpu", "counters", "regions",
          "logs", "channels", "tasks", "memory", "allocations", "net", "load")
 
 
@@ -241,6 +241,12 @@ def main(argv=None) -> int:
                 return 3
         elif checks is None:
             print("[b2] 旁边没有 manifest，跳过对账")
+    elif a.mode == "calls":
+        print("[b2] calls: timer=%s 窗口 %s 内命中 %s 次（收集 %s，合计 %.3fms，最长 %.3fms）"
+              % (payload.get("timer"), payload.get("window"), payload.get("matched"),
+                 payload.get("collected"), payload.get("sum_ms") or 0.0, payload.get("max_ms") or 0.0))
+        if payload.get("truncated"):
+            print("[b2] 注意：命中数超过收集上限（-limit），只取了前 %s 条" % payload.get("collected"))
     elif a.mode == "timerstats":
         summary = summarize_timerstats(payload)
         print("[b2] timerstats: thread=%s 窗口 %.3fs，%s 个 timer（输出 %s 行），self 合计 %.3fs（覆盖 %.2f%%）"
