@@ -28,7 +28,21 @@ from pipeline.extract import insights_export
 
 SCHEMA = "perf-digest/1"
 TOP_N = 15
+# 等待类总口径（展示/统计用）：名字里带 wait / stall / idle
 WAIT_RE = re.compile(r"wait|stall|idle", re.IGNORECASE)
+# 真正"空闲"（从 busy 里扣）：M5.1b 采样器校准后收紧（2026-11-04）
+#   校准方法：引擎自报 busy（GGameThreadTime，注释即 excluding idle）+ 引擎自报 idle = 帧间隔。
+#   实测 GT：帧间隔 2.723、引擎 idle 1.252、引擎 busy 1.637（2.723−1.252≈1.637 ✓）。
+#   而旧的"所有 wait|stall|idle 全扣"= 1.399 ms/帧，比引擎 idle 多扣 0.147 —— 多扣的正好是
+#   WaitForTasks / GameThreadWaitForTask / FWaitingQueue_Unpark_* 这一族：它们是"等并行任务"，
+#   任务侧在干活，帧在推进，不是空转，所以不该从 busy 里扣掉（要报，但单独列）。
+# 注意：不是"只扣名字含 idle 的"。除 overlap 那族以外，所有 wait/stall/idle 都算**停顿**要扣
+# （WaitForFrame、fence 等待都是真停滞）；真正的例外只有"等并行任务"——任务侧在干活、帧在推进。
+IDLE_RE = re.compile(r"idle", re.IGNORECASE)
+# 工作重叠型等待：等并行任务/等队列，不代表该线程空转
+OVERLAP_RE = re.compile(
+    r"(waitfortasks|waituntiltaskscomplete|waitforvisibilitytasks|tasks::wait"
+    r"|waitimpl_|fwaitingqueue_)", re.IGNORECASE)
 WAIT_LABEL = "wait"
 CONCLUSION_WAIT_CLEAR = 50.0
 CONCLUSION_WAIT_MODERATE = 30.0
@@ -55,15 +69,35 @@ def merge_by_name(rows):
 
 def split_wait(rows):
     """R5：等待类（wait / stall / idle）单列。自耗时为 0 的等待行（如 D3D12 的 "Game thread tick wait
-    time"）不进展示列表，也不计等待类的 calls。返回 (非等待行, 等待行按 self 降序, 等待合计 dict)。"""
+    time"）不进展示列表，也不计等待类的 calls。
+
+    返回 (非等待行, 等待行按 self 降序, 等待合计 dict)。合计里多带两个分类（M5.1b 校准后）：
+      idle_s    —— 真空闲（名字含 idle），bound 的 busy 只扣这部分
+      overlap_s —— 工作重叠型等待（等并行任务/队列），报出来但不扣
+      wait_s / self_s —— 旧口径（全部等待类），保留给 digest 的展示与兼容
+    """
     wait = sorted((r for r in rows if WAIT_RE.search(r["name"]) and r["excl"] > 0), key=lambda r: -r["excl"])
     others = [r for r in rows if not WAIT_RE.search(r["name"])]
     wait_self = sum(r["excl"] for r in wait)
     total = sum(r["excl"] for r in rows) or 1e-9
+
+    def bucket(name):
+        # 只有"等并行任务/队列"这一类不扣；其余 wait/stall/idle 都是停顿
+        return "overlap" if OVERLAP_RE.search(name) else "stall"
+
+    idle_self = sum(r["excl"] for r in wait if bucket(r["name"]) == "stall")
+    overlap_self = sum(r["excl"] for r in wait if bucket(r["name"]) == "overlap")
     return others, wait, {
         "self_s": round(wait_self, 3),
         "self_pct": round(100.0 * wait_self / total, 2),
         "count": sum(r["count"] for r in wait),
+        # stall_*：非重叠等待（真停顿，bound 的 busy 扣这部分）；overlap_*：等并行任务，不扣
+        "stall_s": round(idle_self, 3),
+        "stall_pct": round(100.0 * idle_self / total, 2),
+        "idle_s": round(idle_self, 3),
+        "idle_pct": round(100.0 * idle_self / total, 2),
+        "overlap_s": round(overlap_self, 3),
+        "overlap_pct": round(100.0 * overlap_self / total, 2),
     }
 
 

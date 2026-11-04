@@ -33,15 +33,23 @@ def b2_gpu(graphics_s=24.0, compute_s=31.0):
 
 
 class ThreadLineTest(unittest.TestCase):
-    def test_busy_is_interval_minus_wait(self):
-        # 100 帧、等待类 2.0s → 20ms/帧；interval 24.6 → busy 4.6ms
-        rows = [row("WaitForTasks", 2.0, count=50), row("DrawWork", 1.0, count=100)]
+    def test_busy_is_interval_minus_idle(self):
+        # M5.1b 校准后：busy 只扣"真空闲"（名字含 idle）。100 帧、idle 2.0s → 20ms/帧；interval 24.6 → busy 4.6ms
+        rows = [row("Game thread idle time", 2.0, count=100), row("DrawWork", 1.0, count=100)]
         l = bound.thread_line("GT", rows, 100, 24.6)
         self.assertTrue(l["available"])
         self.assertAlmostEqual(l["wait_per_frame_ms"], 20.0, places=2)
         self.assertAlmostEqual(l["busy_per_frame_ms"], 4.6, places=2)
         self.assertAlmostEqual(l["self_per_frame_ms"], 10.0, places=2)
         self.assertAlmostEqual(l["occupancy"], 4.6 / 24.6, places=3)
+
+    def test_task_wait_is_overlap_not_idle(self):
+        """等并行任务是"工作重叠"，不扣 busy —— 这是 5.1b 采样器校准出来的关键修正。"""
+        rows = [row("WaitForTasks", 2.0, count=100), row("DrawWork", 1.0, count=100)]
+        l = bound.thread_line("GT", rows, 100, 24.6)
+        self.assertAlmostEqual(l["wait_per_frame_ms"], 20.0, places=2)      # 仍然报出来
+        self.assertAlmostEqual(l["busy_per_frame_ms"], 24.6, places=3)      # 但不扣
+        self.assertAlmostEqual(l["overlap_per_frame_ms"], 20.0, places=2)
 
     def test_zero_wait_busy_equals_interval(self):
         rows = [row("Tick", 24.0, count=100)]
@@ -80,22 +88,33 @@ class GpuLineTest(unittest.TestCase):
 
 
 def a1_like_lines():
-    """A1 实测形态：GT 100%、GPU Compute 25.0、RT 7.5、RHI 3.7。"""
-    gt = bound.thread_line("GT", [row("Tick", 24.0, count=1293)], 1293, 24.6)
-    rt = bound.thread_line("RT", [row("WaitForTasks", 22.18, count=7134)], 1293, 24.6)
-    rhi = bound.thread_line("RHI", [row("WaitForTasks", 26.94, count=39678)], 1293, 24.6)
+    """A1 实测形态（M5.1b 校准后口径）：
+
+    GT self 23.06ms、RT self 5.25ms、RHI self 3.83ms；三线 busy 都≈interval（100%），
+    RT/RHI 的"忙碌"几乎全是等并行任务（17.2 / 21.0 ms/帧，不再从 busy 扣）。
+    """
+    gt = bound.thread_line("GT", [row("PerfEvidenceRegress", 29.8, count=12930)], 1293, 24.6)
+    rt = bound.thread_line("RT", [row("WaitForTasks", 22.18, count=7134), row("DrawWork", 6.8, count=1293)],
+                           1293, 24.6)
+    rhi = bound.thread_line("RHI", [row("WaitForTasks", 26.94, count=39678),
+                                    row("RHIWork", 4.9, count=1293)], 1293, 24.6)
     g = bound.gpu_line(b2_gpu(graphics_s=24.56, compute_s=32.3), 1293, 24.6)
     return [gt, rt, rhi, g]
 
 
 class VerdictTest(unittest.TestCase):
-    def test_a1_shape_gt_bound_with_saturated_compute_context(self):
-        # A1 实测形态：GT busy≈interval（99%），Graphics 19.0ms（77%），
-        # Compute 整窗饱和只作上下文（M5.1 修正后不再把饱和后台队列当 GPU bound 信号）
+    def test_a1_shape_saturated_tie_resolved_by_self(self):
+        """A1 形态：三条 CPU 线都饱和（M5.1b 校准后"等并行任务"不再扣 busy）。
+
+        这时 busy 没有分辨力，判定改用**自耗时**：GT self 远大于 RT/RHI → 仍指 GT。
+        饱和的 Compute 队列只作上下文，不作为 GPU bound 信号（M5.1 的决定不变）。
+        """
         lines = a1_like_lines()
         text, conf, kind, detail = bound.verdict(lines, 24.6)
-        self.assertEqual(kind, "single")
+        self.assertEqual(kind, "saturated_tie")
         self.assertEqual(detail["top"], "GT")
+        self.assertEqual(detail["ranked_by"], "self_per_frame_ms")
+        self.assertIn("自耗时", text)
         g = next(l for l in lines if l["line"] == "GPU")
         self.assertIn("Compute", g["note"])
 

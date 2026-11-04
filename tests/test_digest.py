@@ -68,6 +68,19 @@ class SplitWaitTest(unittest.TestCase):
         self.assertEqual([r["name"] for r in others], ["RenderGraphExecute"])
         self.assertEqual((total["self_s"], total["self_pct"], total["count"]), (3.5, 35.0, 3))
 
+    def test_idle_vs_overlap_split(self):
+        """M5.1b 校准：等并行任务那族算 overlap（不扣 busy），只有名字含 idle 的才是真空闲。"""
+        rows = [row("Game thread idle time", 1.2),
+                row("WaitForTasks", 0.4),
+                row("FWaitingQueue_Unpark_SignalWaitingThread", 0.1),
+                row("FTaskBase::WaitImpl_StateChangeEvent_WaitFor", 0.2),
+                row("RenderGraphExecute", 6.0)]
+        _others, _wait, total = run_digest.split_wait(rows)
+        self.assertAlmostEqual(total["idle_s"], 1.2)
+        self.assertAlmostEqual(total["overlap_s"], 0.7)
+        self.assertAlmostEqual(total["self_s"], 1.9)     # 旧口径不变，保留给展示
+        self.assertAlmostEqual(total["self_pct"], round(100.0 * 1.9 / 7.9, 2))
+
     def test_case_insensitive(self):
         _, wait, _ = run_digest.split_wait([row("IDLESTATE", 1.0), row("render", 1.0)])
         self.assertEqual([r["name"] for r in wait], ["IDLESTATE"])

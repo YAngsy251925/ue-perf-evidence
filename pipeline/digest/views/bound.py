@@ -29,7 +29,8 @@ SCHEMA = "perf-digest/1"
 KIND = "bound"
 TOP_N = 8
 
-TIE_BAND = 0.10           # 相差 10% 以内标「难分」（PLAN 5.1）
+TIE_BAND = 0.10
+SATURATED_OCCUPANCY = 0.95   # busy ≥ 95% 帧间隔 → 视为饱和，busy 不再能区分           # 相差 10% 以内标「难分」（PLAN 5.1）
 CLEAR_GAP = 0.20          # 领先 20% 以上才算 clear（10–20% moderate）
 CAPPED_RATIO = 0.95       # interval ≥ 预算的 95% → 帧被节流
 UNDER_BUDGET_RATIO = 0.80 # 都低于预算 80% 且 interval 也低于 → 瓶颈不在这四线
@@ -52,18 +53,30 @@ def thread_line(label, rows, window_frames, interval_mean_ms):
         return {"line": label, "available": False}
     _others, _wait, wait_total = run_digest.split_wait(rows)
     wait_s = wait_total["self_s"]
+    idle_s = wait_total.get("stall_s", wait_s)         # M5.1b 校准后：busy 只扣"真停顿"（等并行任务不扣）
+    overlap_s = wait_total.get("overlap_s", 0.0)
     self_s = sum(r["excl"] for r in rows) - wait_s
     wait_pf = 1000.0 * wait_s / window_frames
-    busy_pf = max(interval_mean_ms - wait_pf, 0.0)
+    idle_pf = 1000.0 * idle_s / window_frames
+    overlap_pf = 1000.0 * overlap_s / window_frames
+    # busy = 帧间隔均值 − **真空闲**/帧（等并行任务那族不算空转，见 run_digest.IDLE_RE 的注释）
+    busy_pf = max(interval_mean_ms - idle_pf, 0.0)
     self_pf = 1000.0 * self_s / window_frames
     return {"line": label, "available": True,
             "wait_s": round(wait_s, 3),
             "wait_per_frame_ms": round(wait_pf, 3),
+            "idle_per_frame_ms": round(idle_pf, 3),
+            "overlap_per_frame_ms": round(overlap_pf, 3),
             "busy_per_frame_ms": round(busy_pf, 3),
+            # 对照口径：把"等并行任务"也一并扣掉（M5.1b 校准前的旧算法）。两个都给，
+            # 是为了让读者看到口径敏感度——RT/RHI 的 busy 会因这一项而在 7ms 与 100% 之间跳。
+            "busy_lenient_per_frame_ms": round(max(interval_mean_ms - wait_pf, 0.0), 3),
             "occupancy": round(busy_pf / interval_mean_ms, 3),
             "self_per_frame_ms": round(self_pf, 3),
             "gap_note": ("busy 与 self 的差是 scope 之间的空隙（%.1f ms/帧）" % (busy_pf - self_pf))
-                        if busy_pf - self_pf > 0.05 else None}
+                        if busy_pf - self_pf > 0.05 else None,
+            "wait_note": ("其中 %.1f ms/帧是与并行任务重叠的等待，不算空转（已计入 busy）" % overlap_pf)
+                         if overlap_pf > 0.05 else None}
 
 
 def gpu_line(b2_gpu, window_frames, interval_mean_ms):
@@ -137,6 +150,27 @@ def verdict(lines, interval_p50_ms, budget_ms=None, fence=None):
                     % (top["line"], top["busy_per_frame_ms"], interval_p50_ms, fence_txt))
             return text, "moderate", "under_budget", detail
     if len(group) > 1:
+        # 多条线都饱和时 busy 失去分辨力（M5.1b 校准后 RT/RHI 的"等并行任务"不再从 busy 扣掉，
+        # 于是三条 CPU 线都可能 100%）。这时用**自耗时**做第二判据：真实工作量落在哪条线上。
+        saturated = [l for l in group if (l.get("occupancy") or 0.0) >= SATURATED_OCCUPANCY]
+        if len(saturated) > 1:
+            by_self = sorted(saturated, key=lambda l: -(l.get("self_per_frame_ms") or 0.0))
+            best = by_self[0]
+            runner = by_self[1] if len(by_self) > 1 else None
+            lead = ((best.get("self_per_frame_ms") or 0.0) /
+                    max(1e-9, (runner.get("self_per_frame_ms") or 0.0))) if runner else None
+            names = "、".join("%s(self %.1fms)" % (l["line"], l.get("self_per_frame_ms") or 0.0)
+                             for l in saturated)
+            text = ("多条线都接近饱和（%s），busy 已无分辨力；按**自耗时**看工作量在 %s"
+                    "（self %.1f ms/帧%s）%s"
+                    % ("、".join("%s %.1fms" % (l["line"], l["busy_per_frame_ms"]) for l in group),
+                       best["line"], best.get("self_per_frame_ms") or 0.0,
+                       "，是次名 %.1f 倍" % lead if lead and lead > 1.05 else "，与次名相当",
+                       fence_txt))
+            detail = dict(detail, top=best["line"], saturated_tie=True,
+                          ranked_by="self_per_frame_ms", self_ranking=names)
+            conf = "moderate" if (lead and lead > 1.2) else "marginal"
+            return text, conf, "saturated_tie", detail
         names = "、".join("%s(%.1fms)" % (l["line"], l["busy_per_frame_ms"]) for l in group)
         text = ("难分：%s 每帧忙碌相差在 10%% 以内（帧间隔 %.1f ms），需要 M5.1 的每帧证据或 "
                 "5.1b 采样器校准进一步拆分%s" % (names, interval_p50_ms, fence_txt))
@@ -206,9 +240,9 @@ def render_md(digest):
         lines += ["## 警告"]
         lines += ["- %s" % w for w in digest["warnings"]] or ["- （无）"]
         return "\n".join(lines) + "\n"
-    lines += ["## 四线忙碌（每帧平均，busy = interval − wait）",
-              "| 线 | busy/帧 ms | 占帧间隔 | wait/帧 ms | self/帧 ms | 备注 |",
-              "|---|---|---|---|---|---|"]
+    lines += ["## 四线忙碌（每帧平均，busy = interval − 停顿）",
+              "| 线 | busy/帧 ms | 占帧间隔 | 停顿/帧 ms | 其中并行等待 | 对照：全扣口径 | self/帧 ms | 备注 |",
+              "|---|---|---|---|---|---|---|---|"]
     for l in st["lines"]:
         if l.get("available"):
             if l.get("note"):
@@ -217,11 +251,12 @@ def render_md(digest):
                 note = "队列 %s" % l["queue"]
             else:
                 note = l.get("gap_note") or ""
-            lines.append("| %s | %s | %s%% | %s | %s | %s |" % (
+            lines.append("| %s | %s | %s%% | %s | %s | %s | %s | %s |" % (
                 l["line"], l["busy_per_frame_ms"], round(100.0 * l["occupancy"], 1),
-                l.get("wait_per_frame_ms", "—"), l.get("self_per_frame_ms", "—"), note))
+                l.get("idle_per_frame_ms", "—"), l.get("overlap_per_frame_ms", "—"),
+                l.get("busy_lenient_per_frame_ms", "—"), l.get("self_per_frame_ms", "—"), note))
         else:
-            lines.append("| %s | （缺失） | | | | %s |" % (
+            lines.append("| %s | （缺失） | | | | | | %s |" % (
                 l["line"], l.get("note") or "无该线程统计"))
     lines.append("")
     fence = st.get("fence")
