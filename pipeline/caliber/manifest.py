@@ -130,6 +130,32 @@ def apply_coverage(windows, basis, coverage, snapshot, warnings):
     return True
 
 
+def load_memreport(run_dir):
+    """memreport/index.json + 首份报告的摘要（M6.1）。没有就 None。"""
+    index_path = os.path.join(run_dir, "memreport", "index.json")
+    if not os.path.isfile(index_path):
+        return None
+    with open(index_path, encoding="utf-8") as f:
+        index = json.load(f)
+    files = index.get("files") or []
+    if not files:
+        return None
+    from pipeline.extract import memreport as M
+    first = max(files, key=lambda f: f.get("size") or 0)
+    parsed = M.parse(os.path.join(run_dir, "memreport", first["name"]))
+    groups = parsed.get("group_totals_mb") or {}
+    return {
+        "files": [f["name"] for f in files],
+        "bytes": sum(f.get("size") or 0 for f in files),
+        "summary": {
+            "platform": parsed.get("platform"),
+            "stat_count": parsed.get("stat_count"),
+            "top_groups_mb": dict(list(groups.items())[:5]),
+            "sections": len(parsed.get("sections") or []),
+        },
+    }
+
+
 def load_presentmon(run_dir):
     """presentmon/index.json（M5.3 的第三方帧时间）；没有就 None。"""
     path = os.path.join(run_dir, "presentmon", "index.json")
@@ -172,6 +198,25 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
     frame_semantics, fs_warnings = build_frame_semantics(
         series, win["windows"], win["basis"], measurable, reason, rhi["rhi_state"])
     warnings += fs_warnings
+    mr = load_memreport(run_dir)
+    memreport_block = None
+    if mr:
+        at = (snapshot or {}).get("exec_at") or {}
+        memreport_block = {
+            "files": mr["files"],
+            "bytes": mr["bytes"],
+            "summary": mr["summary"],
+            "at_s": at.get("at_s"),
+            "in_probe": bool(at.get("in_probe")),
+            # 用"声明的秒数"判断，不要拿 trace 时间比：exec_at 与 CoverageStart 都由同一个 ticker 记时，
+            # 而 trace 原点是引擎启动（比第一个 world tick 早十几秒），两套时间轴不能直接相减。
+            "inside_coverage_probe": bool(
+                at.get("in_probe") and at.get("at_s") is not None
+                and snapshot and snapshot.get("csv")
+                and float(snapshot["csv"]["coverage_start_s"]) <= float(at["at_s"])
+                < float(snapshot["csv"]["stop_at_s"])),
+            "note": "重操作落在探针段时，统计窗口的 p99 不受它影响（R7/P15）",
+        }
     pm = load_presentmon(run_dir)
     presentmon_block = None
     if pm:
@@ -228,6 +273,7 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
         "window_basis": win["basis"],
         "frame_semantics": frame_semantics,
         "presentmon": presentmon_block,
+        "memreport": memreport_block,
         "inputs": {
             "engine_log": display_path(log_path, run_dir) if log else None,
             "extract": display_path(extract, run_dir),

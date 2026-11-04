@@ -65,6 +65,11 @@ python perfctl.py diff cpu <run_a> <run_b> --out <dir> [--trace-a FILE] [--trace
 python perfctl.py diff cpu -a R1 R2 R3 R4 R5 -b S1 S2 S3 S4 S5 --out <dir>    # 组形态（M3.3）
 python perfctl.py diff cpu -a ... -b ... --out <dir> --significance-only       # 只读 manifest 的 p50，CI 门槛
 
+# 内存（M6）：MemReport 视图与分配导出
+python perfctl.py capture harness/profiles/memory.json runs/<id>     # memreport 落在 probe 段，p99 不受影响
+python perfctl.py digest memory runs/<id> --out runs/<id>/mem
+python perfctl.py digest allocs runs/<id> --out runs/<id>/allocs --rule aAf --max 20000   # 需要 trace 带 memory 通道
+
 # 配置快照（M5.5）：cvar（ExecCmds + LogConfig 两个源）与 scalability 档位，对账 profile 声明
 python perfctl.py digest config runs/<id> --out runs/<id>/config
 

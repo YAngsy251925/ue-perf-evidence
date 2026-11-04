@@ -20,6 +20,7 @@ UE 根目录：--ue-root > 环境变量 UE_ROOT > 默认 D:\\Epic\\Games\\UE_5.8
   -ExecOnAnalysisCompleteCmd 必须用 @=rsp；内联写法在 5.8 静默不执行
 """
 import argparse
+import io
 import os
 import re
 import subprocess
@@ -61,6 +62,36 @@ def run_insights(trace: str, outdir: str, commands, ue_root=None, timeout=1800) 
     ]
     subprocess.run(" ".join(args), timeout=timeout)
     return os.path.join(outdir, "insights.log")
+
+
+def export_allocs(trace, outdir, rule="aAf", time_a=None, time_b=None, max_results=1000,
+                  columns=None, ue_root=None, timeout=1800):
+    """M6.2：A 路的 MemoryInsights.ExportAllocs（内存分配导出）。
+
+    规则取值见 TraceServices 的 `IAllocationsProvider::EQueryRule`：
+      aAf 活跃分配（默认）/ afA / Aaf / aAfB 缩减 / AaBf 增长 / AaB 分配事件 / AfB 释放事件 /
+      AafB 短命 / aABf 长命 / AaBCf 泄漏 / ...
+    时间点：A/B（部分规则要 C/D），单位秒（trace 时间）。
+    返回 (csv_path 或 None, 日志文本)。
+    """
+    outdir = os.path.abspath(outdir)
+    os.makedirs(outdir, exist_ok=True)
+    csv_name = "allocs_%s.csv" % safe_name(rule)
+    csv_path = out_path(outdir, csv_name)
+    cmd = "MemoryInsights.ExportAllocs -Rule=%s -Output=%s -MaxResults=%s" % (
+        rule, csv_path, int(max_results))
+    if time_a is not None:
+        cmd += " -TimeA=%.6f" % float(time_a)
+    if time_b is not None:
+        cmd += " -TimeB=%.6f" % float(time_b)
+    if columns:
+        cmd += " -Columns=%s" % columns
+    log = run_insights(trace, outdir, [cmd], ue_root=ue_root, timeout=timeout)
+    text = ""
+    if os.path.isfile(log):
+        with io.open(log, encoding="utf-8-sig", errors="replace") as f:
+            text = f.read()
+    return (csv_path if os.path.isfile(csv_path) else None), text
 
 
 def safe_name(name: str) -> str:

@@ -64,7 +64,10 @@ def exec_at_config(profile: dict):
     at = profile.get("exec_at")
     if not at:
         return None
-    return {"at_s": float(at["at_s"]), "command": str(at["command"])}
+    return {"at_s": float(at["at_s"]), "command": str(at["command"]),
+            # in_probe=true：这个定时命令**故意**放进 coverage_probe 段（M6.1 的 memreport），
+            # 目的是让重操作远离统计窗口，而不是像 hitch-hunt 那样要在干净段里制造 hitch。
+            "in_probe": bool(at.get("in_probe", False))}
 
 
 def csv_config(profile: dict) -> dict:
@@ -216,9 +219,13 @@ def validate(p: dict) -> list:
             problems.append("csv.coverage_start_s must be >= conditions.duration_s (the CSV-free segment "
                             "must cover the declared duration; P15 coverage probe lives at the end)")
         at = exec_at_config(p)
-        if at and at["at_s"] >= csv["coverage_start_s"]:
+        if at and at.get("in_probe"):
+            if not (csv["coverage_start_s"] <= at["at_s"] < csv["stop_at_s"]):
+                problems.append("exec_at.in_probe=true requires coverage_start_s <= at_s < stop_at_s "
+                                "(重操作必须整段落在探针窗口内，M6.1)")
+        elif at and at["at_s"] >= csv["coverage_start_s"]:
             problems.append("exec_at.at_s must be < csv.coverage_start_s (the injected hitch belongs in the "
-                            "CSV-free measurement segment)")
+                            "CSV-free measurement segment); 内存快照请用 in_probe=true")
 
     for label, value in [("map", p.get("map", ""))] + [("flag", f) for f in p.get("flags") or []] \
             + [("exec command", c) for c in cmds]:

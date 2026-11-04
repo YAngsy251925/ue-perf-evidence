@@ -104,6 +104,45 @@ def archive_csv(run_dir, uproject, since_epoch, until_epoch=None):
     return copied
 
 
+def project_memreport_dir(uproject):
+    """工程的 MemReport 输出目录（引擎写在 <Project>/Saved/Profiling/MemReports/<Level>-<Platform>-<date>/）。"""
+    return os.path.join(os.path.dirname(os.path.abspath(uproject)), "Saved", "Profiling", "MemReports")
+
+
+def archive_memreports(run_dir, uproject, since_epoch, until_epoch=None):
+    """把本次 run 期间写出的 .memreport 拷进 <run_dir>/memreport/（M6.1，P6 的落地检查）。
+
+    引擎把 memreport 写在多层子目录里；这里**摊平**成 memreport/<文件名字>，并记 index.json。
+    """
+    src = project_memreport_dir(uproject)
+    if not os.path.isdir(src):
+        return []
+    dest = os.path.join(run_dir, "memreport")
+    copied = []
+    for dirpath, _dirnames, filenames in os.walk(src):
+        for name in filenames:
+            if not name.lower().endswith(".memreport"):
+                continue
+            path = os.path.join(dirpath, name)
+            mtime = os.path.getmtime(path)
+            if mtime < since_epoch:
+                continue
+            if until_epoch is not None and mtime > until_epoch:
+                continue
+            os.makedirs(dest, exist_ok=True)
+            target = os.path.join(dest, name)
+            shutil.copy2(path, target)
+            copied.append({"name": name, "size": os.path.getsize(target),
+                           "mtime_epoch": round(mtime, 3),
+                           "source": dirpath.replace(os.sep, "/")})
+    if copied:
+        index_path = os.path.join(dest, "index.json")
+        with open(index_path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump({"schema": "perf-memreport-index/0", "files": copied}, f,
+                      ensure_ascii=False, indent=1)
+    return copied
+
+
 def start_presentmon(run_dir, seconds):
     """在 harness 之前起 PresentMon（第三方帧时间仲裁者）；工具缺失或起不来只警告。
 
@@ -157,6 +196,12 @@ def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
     if rc != 0:
         print("[capture] FAILED: harness reported failure (assert / early exit / startup timeout)")
         return 2
+    memreports = archive_memreports(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
+    if memreports:
+        print("[capture] memreport archived: %s" % ", ".join(m["name"] for m in memreports))
+    elif (snapshot.get("exec_at") or {}).get("command", "").startswith("memreport"):
+        print("[capture] WARNING: memreport 命令已调度但没有找到 .memreport 文件（看 %s）"
+              % project_memreport_dir(snapshot["uproject"]))
     copied = archive_csv(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
     if copied:
         print("[capture] csv profiler archived: %s" % ", ".join(copied))

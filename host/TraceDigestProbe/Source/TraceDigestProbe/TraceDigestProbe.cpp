@@ -1569,6 +1569,80 @@ static void EmitFrameTree(const TraceServices::IAnalysisSession& Session, FOutpu
 		Index, ScopeCount, StatNamed, SumSelf * 1000.0);
 }
 
+// load：资源加载的请求表（M6.3）。
+// 注意：provider 只在 trace 里真有 LoadTime/PlatformFile 事件时才存在（TraceServices 按 logger 激活模块），
+// 所以 Lyra 前端这种"没有异步加载"的 run 上 ReadLoadTimeProfilerProvider 会返回 null —— 这时明确报错，
+// 不假装有数据。请求表是 ITable<FLoadRequest>，用 ITableReader 拿行指针。
+static void EmitLoadRows(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
+	const FString& TracePath, const FString& OutPath, double WindowStart, double WindowEnd, int32 Limit)
+{
+	const TraceServices::ILoadTimeProfilerProvider* Load = TraceServices::ReadLoadTimeProfilerProvider(Session);
+	const TraceServices::IFileActivityProvider* FileActivity = TraceServices::ReadFileActivityProvider(Session);
+	const uint64 FileRows = FileActivity ? FileActivity->GetFileActivityTable().GetRowCount() : 0;
+	if (!Load)
+	{
+		Ar.Logf(TEXT("PERF_ERR no load time profiler provider (trace 里没有 LoadTime/PlatformFile 事件；"
+			"需要真的发生异步加载的 run)"));
+		return;
+	}
+	if (WindowEnd <= 0.0) { WindowEnd = Session.GetDurationSeconds(); }
+
+	const TraceServices::ITable<TraceServices::FLoadRequest>& Table = Load->GetRequestsTable();
+	const uint64 RowCount = Table.GetRowCount();
+	struct FStat { int32 Count = 0; double Total = 0.0; double Max = 0.0; };
+	TMap<FString, FStat> ByName;
+	TraceServices::ITableReader<TraceServices::FLoadRequest>* Reader = Table.CreateReader();
+	int32 Seen = 0;
+	if (Reader && Reader->IsValid())
+	{
+		for (uint64 Row = 0; Row < RowCount; ++Row)
+		{
+			Reader->SetRowIndex(Row);
+			const TraceServices::FLoadRequest* Request = Reader->GetCurrentRow();
+			if (!Request || !Request->Name) { continue; }
+			const double Begin = Request->StartTime, End = Request->EndTime;
+			if (End < WindowStart || Begin > WindowEnd) { continue; }
+			const double Duration = FMath::Max(0.0, End - Begin);
+			FStat& Slot = ByName.FindOrAdd(FString(Request->Name));
+			Slot.Count += 1;
+			Slot.Total += Duration;
+			Slot.Max = FMath::Max(Slot.Max, Duration);
+			++Seen;
+		}
+		delete Reader;
+	}
+
+	TArray<TPair<FString, FStat>> Rows;
+	for (const TPair<FString, FStat>& Pair : ByName) { Rows.Add(Pair); }
+	Rows.Sort([](const TPair<FString, FStat>& A, const TPair<FString, FStat>& B)
+	{
+		return A.Value.Total > B.Value.Total;
+	});
+
+	FString Out = FString::Printf(
+		TEXT("{\"schema\":\"perf-b2-load/0\",\"trace\":\"%s\",\"window\":[%.6f,%.6f],")
+		TEXT("\"request_rows\":%llu,\"requests_in_window\":%d,\"file_activity_rows\":%llu,"
+			 "\"package_count\":%d,\"packages\":["),
+		*JsonEscape(*TracePath), WindowStart, WindowEnd, (unsigned long long)RowCount, Seen,
+		(unsigned long long)FileRows, Rows.Num());
+	int32 Emitted = 0;
+	for (const TPair<FString, FStat>& Pair : Rows)
+	{
+		if (Limit > 0 && Emitted >= Limit) { break; }
+		if (Emitted > 0) { Out += TEXT(","); }
+		Out += FString::Printf(
+			TEXT("{\"name\":\"%s\",\"count\":%d,\"total_ms\":%.4f,\"max_ms\":%.4f,\"avg_ms\":%.4f}"),
+			*JsonEscape(*Pair.Key), Pair.Value.Count, Pair.Value.Total * 1000.0,
+			Pair.Value.Max * 1000.0,
+			Pair.Value.Count > 0 ? Pair.Value.Total * 1000.0 / Pair.Value.Count : 0.0);
+		++Emitted;
+	}
+	Out += TEXT("]}");
+	WriteJson(Ar, OutPath, Out);
+	Ar.Logf(TEXT("PERF_LOAD requests=%llu in_window=%d packages=%d file_rows=%llu"),
+		(unsigned long long)RowCount, Seen, Rows.Num(), (unsigned long long)FileRows);
+}
+
 // TraceDigestPerf 的实现（-run=TraceDigestPerf 经 UTraceDigestPerfCommandlet 进来）。
 //   mode 为空（默认）：输出 trace 里以 prefix 开头的书签（M2.2 的 coverage 边界，capture.py 在用）
 //   mode=frames      ：帧轨道（Game / Rendering 各一条，index/start/end/duration）
@@ -1698,7 +1772,7 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	}
 	if (Mode == TEXT("load"))
 	{
-		EmitLoad(*Session, Ar, TracePath, OutPath);
+		EmitLoadRows(*Session, Ar, TracePath, OutPath, WindowStart, WindowEnd, Limit);
 		Ar.Logf(TEXT("PERF_DONE"));
 		return;
 	}
