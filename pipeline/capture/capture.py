@@ -16,8 +16,10 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import time
 
 from pipeline.capture import profile as P
 
@@ -67,6 +69,41 @@ def collect_coverage(run_dir, ue_root, timeout):
     return result, None
 
 
+def project_csv_dir(uproject):
+    """工程的 CSV Profiler 输出目录（引擎固定写在 <Project>/Saved/Profiling/CSV）。"""
+    return os.path.join(os.path.dirname(os.path.abspath(uproject)), "Saved", "Profiling", "CSV")
+
+
+def archive_csv(run_dir, uproject, since_epoch, until_epoch=None):
+    """把本次 run 写出的 CSV Profiler 文件拷进 <run_dir>/csv/ 并写 index.json（§5.1 的 csv/）。
+
+    time 窗口按文件 mtime 判：CSV 在 -ExitAfterCsvProfiling 时落盘，mtime 落在 run 期间。
+    返回拷贝的文件名列表；没有就返回空（不报错——smoke run 可能不开 CSV）。
+    """
+    src = project_csv_dir(uproject)
+    if not os.path.isdir(src):
+        return []
+    dest = os.path.join(run_dir, "csv")
+    copied = []
+    for name in sorted(os.listdir(src)):
+        if not name.lower().endswith(".csv"):
+            continue
+        path = os.path.join(src, name)
+        mtime = os.path.getmtime(path)
+        if mtime < since_epoch:
+            continue
+        if until_epoch is not None and mtime > until_epoch:
+            continue
+        os.makedirs(dest, exist_ok=True)
+        shutil.copy2(path, os.path.join(dest, name))
+        copied.append(name)
+    if copied:
+        with open(os.path.join(dest, "index.json"), "w", encoding="utf-8", newline="\n") as f:
+            json.dump({"schema": "perf-csv-index/0", "files": copied,
+                       "source": src.replace("\\", "/")}, f, ensure_ascii=False, indent=1)
+    return copied
+
+
 def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
     snapshot = P.prepare(name, run_dir, uproject, ue_root, map_override)
     budget, fallback_s = snapshot["harness"]["startup_budget_s"], snapshot["harness"]["run_after_ready_s"]
@@ -74,11 +111,18 @@ def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
     cmd = ["bash", HARNESS, bat, run_dir.replace("\\", "/"), str(budget), "-", "-", str(fallback_s)]
     print("[capture] %s (%s class=%s)" % (run_dir, snapshot["profile_name"], snapshot["profile_class"]))
     print("[capture] harness: %s" % " ".join(cmd[1:]))
+    launch_epoch = time.time()
     rc, output = run(cmd, budget + fallback_s + 180)
     sys.stdout.write(output)
     if rc != 0:
         print("[capture] FAILED: harness reported failure (assert / early exit / startup timeout)")
         return 2
+    copied = archive_csv(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
+    if copied:
+        print("[capture] csv profiler archived: %s" % ", ".join(copied))
+    elif snapshot.get("csv"):
+        print("[capture] WARNING: csv profiler enabled but no CSV file found in %s"
+              % project_csv_dir(snapshot["uproject"]))
     if snapshot.get("csv"):
         print("[capture] collecting coverage bookmarks via TraceDigestPerf ...")
         result, err = collect_coverage(run_dir, ue_root, 900)

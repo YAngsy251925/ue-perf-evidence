@@ -65,6 +65,14 @@ python perfctl.py diff cpu <run_a> <run_b> --out <dir> [--trace-a FILE] [--trace
 python perfctl.py diff cpu -a R1 R2 R3 R4 R5 -b S1 S2 S3 S4 S5 --out <dir>    # 组形态（M3.3）
 python perfctl.py diff cpu -a ... -b ... --out <dir> --significance-only       # 只读 manifest 的 p50，CI 门槛
 
+# 三路交叉校验（M5.2）：CSV Profiler ↔ trace 帧间隔 ↔ B2 GPU
+# capture 会把 CSV Profiler 产物归档到 <run_dir>/csv/；历史 run 用 tools/backfill_csv.py 回填
+python perfctl.py digest crosscheck runs/<id> --out runs/<id>/crosscheck --b2
+
+# PerfreportTool（引擎自带，需 DOTNET_ROOT 指向引擎自带的 .NET 10）
+# 注意 reportType 只有 all/default/memory/condensed/Default60fps/Default30fps/AI5/Memory
+DOTNET_ROOT=D:/Epic/Games/UE_5.8/Engine/Binaries/ThirdParty/DotNet/10.0/win-x64   D:/Epic/Games/UE_5.8/Engine/Binaries/DotNET/CsvTools/PerfreportTool.exe   -csv <run_dir>/csv/<Profile>.csv -o <out_dir> -reportType Default60fps
+
 # B2 深度读取（M4.2）：frames / timers / timerstats / callers / gpu / counters / regions /
 # logs / channels / tasks / memory / allocations / net / load
 # 传参用空格形态（P19），--out 给绝对路径
