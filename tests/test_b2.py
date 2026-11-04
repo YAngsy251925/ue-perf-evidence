@@ -100,6 +100,13 @@ def write_a_route(dir_path, rows):
 
 
 class TimerStatsTest(unittest.TestCase):
+    def test_stat_named_self_share(self):
+        payload = timerstats_payload()
+        payload["timers"].append({"name": "STAT_Foo", "self_s": 0.5, "inclusive_s": 0.5, "calls": 1})
+        s = b2.summarize_timerstats(payload)
+        total = 26.584 + 0.254 + 0.143 + 0.5
+        self.assertAlmostEqual(s["stat_named_self_pct"], round(100.0 * 0.5 / total, 2), places=2)
+
     def test_summary_coverage(self):
         s = b2.summarize_timerstats(timerstats_payload())
         self.assertEqual(s["timer_count"], 1879)

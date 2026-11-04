@@ -141,9 +141,14 @@ def summarize_timerstats(payload):
     totals = payload.get("totals") or {}
     span = float(payload.get("span_s") or 0.0)
     sum_self = float(totals.get("sum_self_s") or 0.0)
+    # 映射覆盖率（R6）：STAT_ 前缀的 timer 占 self 合计的比例。越低说明桥接描述名越完整。
+    stat_self = sum(float(r.get("self_s") or 0.0) for r in (payload.get("timers") or [])
+                    if str(r.get("name") or "").startswith("STAT_"))
+    all_self = sum(float(r.get("self_s") or 0.0) for r in (payload.get("timers") or []))
     return {
         "timer_count": totals.get("timer_count"),
         "emitted": payload.get("emitted"),
+        "stat_named_self_pct": round(100.0 * stat_self / all_self, 2) if all_self else None,
         "span_s": round(span, 6),
         "sum_self_s": round(sum_self, 6),
         "sum_inclusive_s": round(float(totals.get("sum_inclusive_s") or 0.0), 6),
@@ -236,6 +241,22 @@ def main(argv=None) -> int:
                 return 3
         elif checks is None:
             print("[b2] 旁边没有 manifest，跳过对账")
+    elif a.mode == "timerstats":
+        summary = summarize_timerstats(payload)
+        print("[b2] timerstats: thread=%s 窗口 %.3fs，%s 个 timer（输出 %s 行），self 合计 %.3fs（覆盖 %.2f%%）"
+              % (summary["thread"], summary["span_s"], summary["timer_count"], summary["emitted"],
+                 summary["sum_self_s"], summary["coverage_pct"] or 0.0))
+        if summary.get("stat_named_self_pct") is not None:
+            print("[b2] 映射覆盖率：STAT_ 前缀占 self %.1f%%（越低越好，R6 门槛 <30%%）"
+                  % summary["stat_named_self_pct"])
+        if summary["top"]:
+            print("[b2] Top: %s" % ", ".join(str(x) for x in summary["top"][:5]))
+        if a.compare_csv:
+            comp = compare_a_route(payload, a.compare_csv)
+            print("[b2] 对账 A 路（同名项）：命中 %d 项，最大相对偏差 %.4f%%，判定 %s"
+                  % (comp["matched_n"], comp["worst_rel_pct"], "OK" if comp["ok"] else "MISMATCH"))
+            if not comp["ok"]:
+                return 3
     elif a.mode == "timers":
         print("[b2] timers: %s 个" % payload.get("timer_count", 0))
         manifest = manifest_beside(a.trace)
