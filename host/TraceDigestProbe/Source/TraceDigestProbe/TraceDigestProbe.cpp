@@ -488,6 +488,86 @@ static FString ParseUnquoted(const FString& Params, const TCHAR* Key)
 	return Value;
 }
 
+// ---------------------------------------------------------------- M5.1b 每帧采样器
+// 每帧读引擎自己的计数（RenderTimer.h 的 uint32 cycle 计数器 + RHIGetGPUFrameCycles），
+// 落成 CSV 供 digest bound 与 trace 推导的 busy/wait 对照。cvar PerfEvidence.Sampler=1 打开。
+// 只在有真实 RHI 的视口渲染时这些计数才会更新（nullrhi 不算），所以采样行数≈帧数。
+#if !UE_BUILD_SHIPPING
+#include "RenderTimer.h"
+#include "DynamicRHI.h"
+#include "HAL/FileManager.h"
+#include "Misc/App.h"
+#include "Misc/Paths.h"
+
+static TAutoConsoleVariable<int32> CVarPerfSampler(
+	TEXT("PerfEvidence.Sampler"), 0,
+	TEXT("M5.1b 每帧采样：写 Saved/Profiling/Sampler/perf_sampler_<pid>.csv（0=关闭）"),
+	ECVF_Cheat);
+
+class FPerfEvidenceSampler : public FTickableGameObject
+{
+public:
+	FPerfEvidenceSampler()
+	{
+		const FString Dir = FPaths::ProjectSavedDir() / TEXT("Profiling/Sampler");
+		IFileManager::Get().MakeDirectory(*Dir, true);
+		Path = Dir / FString::Printf(TEXT("perf_sampler_%d.csv"), FPlatformProcess::GetCurrentProcessId());
+		// 先写表头，后续追加
+		FFileHelper::SaveStringToFile(TEXT("frame,game_ms,render_ms,game_wait_ms,render_wait_ms,gpu_ms\n"), *Path);
+	}
+	~FPerfEvidenceSampler()
+	{
+		if (!Buffered.IsEmpty()) { Flush(); }
+	}
+	virtual void Tick(float) override
+	{
+		if (CVarPerfSampler.GetValueOnGameThread() == 0) { return; }
+		const uint32 Game = GGameThreadTime;
+		const uint32 Render = GRenderThreadTime;
+		const uint32 GameWait = GGameThreadWaitTime;
+		const uint32 RenderWait = GRenderThreadWaitTime;
+		const uint32 Gpu = RHIGetGPUFrameCycles(0);
+		// 计数每帧在 FViewport::Draw 里更新；没渲染的帧会保持旧值，用"和上一帧完全相同"来跳过
+		if (Game == LastGame && Render == LastRender && Gpu == LastGpu) { return; }
+		LastGame = Game; LastRender = Render; LastGpu = Gpu;
+		Buffered += FString::Printf(TEXT("%d,%.3f,%.3f,%.3f,%.3f,%.3f\n"),
+			Frames,
+			FPlatformTime::ToMilliseconds(Game), FPlatformTime::ToMilliseconds(Render),
+			FPlatformTime::ToMilliseconds(GameWait), FPlatformTime::ToMilliseconds(RenderWait),
+			FPlatformTime::ToMilliseconds(Gpu));
+		++Frames;
+		if (Frames % 600 == 0) { Flush(); }
+	}
+	virtual TStatId GetStatId() const override
+	{
+		RETURN_QUICK_DECLARE_CYCLE_STAT(FPerfEvidenceSampler, STATGROUP_Tickables);
+	}
+	void Flush()
+	{
+		FFileHelper::SaveStringToFile(Buffered, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
+			&IFileManager::Get(), FILEWRITE_Append);
+		Buffered.Reset();
+	}
+	FString Path;
+	FString Buffered;
+	uint32 LastGame = 0, LastRender = 0, LastGpu = 0;
+	int32 Frames = 0;
+};
+
+static struct FPerfEvidenceSamplerInit
+{
+	FPerfEvidenceSamplerInit()
+	{
+		FTSTicker::GetCoreTicker().AddTicker(TEXT("PerfEvidenceSamplerBoot"), 0.0f, [](float)
+		{
+			new FPerfEvidenceSampler();
+			UE_LOGF(LogTemp, Display, "PerfEvidence: sampler up (cvar PerfEvidence.Sampler)");
+			return false;
+		});
+	}
+} GPerfEvidenceSamplerInit;
+#endif // !UE_BUILD_SHIPPING
+
 // ---------------------------------------------------------------- M6.3 LoadTime 探针
 // 用 Core 的**公开**宏在 trace 里造一条真实的 LoadTime 事件（RequestGroup）。
 // 目的：验证 B2 的 load 读取链路本身可用——这台引擎的 -game/editor 场景都不写 LoadTime 事件

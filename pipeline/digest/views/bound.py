@@ -256,7 +256,8 @@ def not_measurable_digest(manifest):
     return digest, render_md(digest)
 
 
-def build_run_digest(run_dir, manifest, trace, ue_root=None, with_b2=False, target_fps=None):
+def build_run_digest(run_dir, manifest, trace, ue_root=None, with_b2=False, target_fps=None,
+                     with_sampler=False):
     """run 级 bound digest 入口（M5.1）。measurable=false 不导出；预算可选（--target-fps）。"""
     if not manifest.get("measurable", False):
         return not_measurable_digest(manifest)
@@ -302,8 +303,18 @@ def build_run_digest(run_dir, manifest, trace, ue_root=None, with_b2=False, targ
                       "note": "无 B2 gpu 数据（用 --b2 生成，缓存后不重跑）"})
 
     budget_ms = 1000.0 / target_fps if target_fps else None
-    return build_from_data(lines, interval_p50, caliber, win_name, warnings,
-                           budget_ms=budget_ms, fence=fence, frame_mapping=None)
+    digest, md = build_from_data(lines, interval_p50, caliber, win_name, warnings,
+                                 budget_ms=budget_ms, fence=fence, frame_mapping=None)
+    if with_sampler:
+        from pipeline.digest.views import sampler as sampler_view
+        cal = sampler_view.load(run_dir, window_frames)
+        digest["sampler"] = {"available": bool(cal),
+                             "file": (cal or {}).get("file"),
+                             "rows": (cal or {}).get("rows"),
+                             "summary": (cal or {}).get("summary"),
+                             "compare": sampler_view.compare((cal or {}).get("summary"), lines) if cal else None}
+        md = md + "\n" + sampler_view.render_calibration(digest["sampler"])
+    return digest, md
 
 
 def main(argv=None) -> int:
@@ -317,6 +328,8 @@ def main(argv=None) -> int:
     ap.add_argument("--ue-root", default=None)
     ap.add_argument("--b2", action="store_true", help="GPU 线需要 B2 gpu JSON；缓存未命中时真跑一次（约 60 秒）")
     ap.add_argument("--target-fps", type=float, default=None, help="目标帧率预算（可选；不给则只做相对排序）")
+    ap.add_argument("--sampler", action="store_true",
+                    help="用 M5.1b 的每帧采样器校准 busy（引擎自报计数 vs trace 推导）")
     a = ap.parse_args(argv)
 
     run_dir = os.path.abspath(a.run_dir)
@@ -334,7 +347,7 @@ def main(argv=None) -> int:
         return 1
 
     digest, md = build_run_digest(run_dir, manifest, trace, a.ue_root,
-                                  with_b2=a.b2, target_fps=a.target_fps)
+                                  with_b2=a.b2, target_fps=a.target_fps, with_sampler=a.sampler)
     os.makedirs(a.out, exist_ok=True)
     json_path = os.path.join(a.out, "perf_digest.json")
     md_path = os.path.join(a.out, "perf_digest.md")

@@ -1,0 +1,79 @@
+# 注意：这份是**模板**，不是生效的 workflow。
+# 本仓库的推送 token 没有 workflow scope（推 .github/workflows/* 会被 GitHub 拒绝），
+# 所以放在 docs/ci/ 下，需要用时复制到 .github/workflows/perf-gate.yml 即可。
+name: perf-gate
+
+# R9 性能闸门（M6.4）：只读 manifest 里的 p50，不需要 trace，也不需要 GPU。
+# 前提：基线/候选各有 ≥5 次 measure run 的 manifest（用 tools/pack_manifests.py 打成瘦包，
+#       10 个 run 约 90KB）。采集本身要在有 UE + 真实 RHI 的机器上做，不在 GitHub 托管 runner 上跑。
+on:
+  pull_request:
+    paths:
+      - "pipeline/**"
+      - "harness/**"
+      - "docs/PLAN.md"
+  workflow_dispatch:
+    inputs:
+      fail_on:
+        description: "none | regression | significant"
+        default: regression
+
+jobs:
+  r9-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 基线/候选瘦包由采集机器上传（这里假设已在本仓库的 runs/ 或 artifact 里）
+      - name: Fetch perf bundles
+        run: |
+          ls -la runs/ || true
+          # 真实用法（二选一）：
+          #   actions/download-artifact@v4 with name=perf-baseline / perf-candidate
+          #   或从对象存储拉：aws s3 cp s3://perf-runs/baseline.tgz .
+
+      - name: R9 gate
+        id: gate
+        continue-on-error: false
+        run: |
+          python -X utf8 perfctl.py diff cpu \
+            -a runs/baseline/A1 runs/baseline/A2 runs/baseline/A3 runs/baseline/A4 runs/baseline/A5 \
+            -b runs/candidate/B1 runs/candidate/B2 runs/candidate/B3 runs/candidate/B4 runs/candidate/B5 \
+            --significance-only \
+            --fail-on "${{ github.event.inputs.fail_on || 'regression' }}" \
+            --out artifacts/perf-gate --json-line | tee artifacts/perf-gate.log
+
+      - name: Publish verdict
+        if: always()
+        run: |
+          python - <<'PY'
+          import io, json, os, re, pathlib
+          log = pathlib.Path("artifacts/perf-gate.log")
+          line = None
+          if log.exists():
+              for row in io.open(log, encoding="utf-8", errors="replace"):
+                  if row.startswith("PERF_GATE_JSON "):
+                      line = json.loads(row[len("PERF_GATE_JSON "):])
+          summary = pathlib.Path(os.environ.get("GITHUB_STEP_SUMMARY", "summary.md"))
+          with io.open(summary, "a", encoding="utf-8") as f:
+              if not line:
+                  f.write("## 性能闸门\n\n没有拿到判定结果（见日志）。\n")
+              else:
+                  f.write("## 性能闸门\n\n")
+                  f.write("| 判定 | Δmean (ms) | 阈值 (ms) | MDE80 (ms) | n A/B | CV A/B |\n")
+                  f.write("|---|---|---|---|---|---|\n")
+                  f.write("| **%s** (exit=%s) | %+.3f | %.3f | %.3f | %s/%s | %s%%/%s%% |\n" % (
+                      line["decision"], line["exit"], line["delta_mean_ms"] or 0.0,
+                      line["threshold_ms"] or 0.0, line["mde80_ms"] or 0.0,
+                      line["n_a"], line["n_b"], line["cv_a_pct"], line["cv_b_pct"]))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-gate
+          path: artifacts/perf-gate/

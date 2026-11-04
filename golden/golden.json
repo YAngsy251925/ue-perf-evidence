@@ -746,6 +746,7 @@
     "csv_profiler": null,
     "memreport": true,
     "presentmon": false,
+    "sampler": false,
     "snapshothitches": true,
     "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
     "stats": true
@@ -900,6 +901,7 @@
     "csv_profiler": null,
     "memreport": true,
     "presentmon": false,
+    "sampler": false,
     "snapshothitches": true,
     "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
     "stats": true
@@ -1055,6 +1057,7 @@
     "csv_profiler": null,
     "memreport": true,
     "presentmon": false,
+    "sampler": false,
     "snapshothitches": true,
     "source": "build_config=Development (ALLOW_DEBUG_FILES, UE_SNAPSHOTHITCHES_ENABLED)",
     "stats": true
@@ -1270,6 +1273,7 @@
     "csv_profiler": null,
     "memreport": null,
     "presentmon": false,
+    "sampler": false,
     "snapshothitches": null,
     "source": "unknown: no build configuration in the engine log",
     "stats": null

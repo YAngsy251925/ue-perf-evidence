@@ -1,0 +1,55 @@
+{
+  "schema": "perf-profile/0",
+  "name": "measure_sampler",
+  "class": "measure",
+  "description": "M5.1b 校准用：measure + PerfEvidence.Sampler=1（每帧落引擎自报的 game/render/gpu 计数）",
+  "map": "/Engine/Maps/Entry",
+  "rhi": "default",
+  "window": {
+    "windowed": true,
+    "resx": 960,
+    "resy": 540
+  },
+  "flags": [
+    "-unattended",
+    "-nosplash",
+    "-nosound"
+  ],
+  "statnamedevents": true,
+  "trace": {
+    "channels": [
+      "cpu",
+      "frame",
+      "gpu",
+      "bookmark"
+    ],
+    "tail_mb": 64,
+    "tail_mb_provisional": true
+  },
+  "cvars": {
+    "t.MaxFPS": "0",
+    "r.VSync": "0",
+    "r.GTSyncType": "0",
+    "t.IdleWhenNotForeground": "0"
+  },
+  "set_res_cvar": true,
+  "exec_cmds": [
+    "PerfEvidence.Sampler 1"
+  ],
+  "csv": {
+    "coverage_start_s": 35,
+    "stop_at_s": 45,
+    "exit": "exit_after_csv"
+  },
+  "conditions": {
+    "warmup_frames": 60,
+    "duration_s": 30,
+    "camera": "static",
+    "frame_generation": "off"
+  },
+  "stop": {
+    "mode": "clean_exit",
+    "startup_budget_s": 300,
+    "exit_budget_s": 30
+  }
+}

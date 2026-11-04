@@ -130,6 +130,26 @@ def apply_coverage(windows, basis, coverage, snapshot, warnings):
     return True
 
 
+def load_sampler(run_dir, window_frames=None):
+    """M5.1b 每帧采样器的摘要（sampler/*.csv）；没有就 None。"""
+    from pipeline.digest.views import sampler as sampler_view
+    cal = sampler_view.load(run_dir, window_frames)
+    if not cal:
+        return None
+    s = cal.get("summary") or {}
+    return {
+        "file": cal.get("file"),
+        "rows": cal.get("rows"),
+        "rows_used": cal.get("rows_used"),
+        "alignment": cal.get("alignment"),
+        "game_thread_ms": (s.get("game_thread_ms") or {}).get("mean"),
+        "render_thread_ms": (s.get("render_thread_ms") or {}).get("mean"),
+        "gpu_ms": (s.get("gpu_ms") or {}).get("mean"),
+        "game_wait_ms": (s.get("game_wait_ms") or {}).get("mean"),
+        "note": "引擎自报计数（GGameThreadTime/GRenderThreadTime/RHIGetGPUFrameCycles），不含空闲；PIE 与 standalone 分开校准",
+    }
+
+
 def load_memreport(run_dir):
     """memreport/index.json + 首份报告的摘要（M6.1）。没有就 None。"""
     index_path = os.path.join(run_dir, "memreport", "index.json")
@@ -198,6 +218,8 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
     frame_semantics, fs_warnings = build_frame_semantics(
         series, win["windows"], win["basis"], measurable, reason, rhi["rhi_state"])
     warnings += fs_warnings
+    sampler_block = load_sampler(run_dir, ((frame_semantics or {}).get("game") or {}).get("window_frames")
+                                 if isinstance(frame_semantics, dict) else None)
     mr = load_memreport(run_dir)
     memreport_block = None
     if mr:
@@ -261,7 +283,8 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
         "map": desc["map"],
         "mode": desc["mode"],
         "capabilities": {**capabilities(log.get("build_config")), "csv_profiler": csv_profiler,
-                         "presentmon": bool(presentmon_block)},
+                         "presentmon": bool(presentmon_block),
+                         "sampler": bool(sampler_block)},
         "trace": {
             "file": display_path(trace_path, run_dir),
             "channels_requested": desc["trace_channels_requested"],
@@ -274,6 +297,7 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
         "frame_semantics": frame_semantics,
         "presentmon": presentmon_block,
         "memreport": memreport_block,
+        "sampler": sampler_block,
         "inputs": {
             "engine_log": display_path(log_path, run_dir) if log else None,
             "extract": display_path(extract, run_dir),

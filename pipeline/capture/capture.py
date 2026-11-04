@@ -104,6 +104,36 @@ def archive_csv(run_dir, uproject, since_epoch, until_epoch=None):
     return copied
 
 
+def project_sampler_dir(uproject):
+    """插件的每帧采样器写在 <Project>/Saved/Profiling/Sampler/（M5.1b）。"""
+    return os.path.join(os.path.dirname(os.path.abspath(uproject)), "Saved", "Profiling", "Sampler")
+
+
+def archive_sampler(run_dir, uproject, since_epoch, until_epoch=None):
+    src = project_sampler_dir(uproject)
+    if not os.path.isdir(src):
+        return []
+    dest = os.path.join(run_dir, "sampler")
+    copied = []
+    for dirpath, _dirnames, filenames in os.walk(src):
+        for name in filenames:
+            if not name.lower().endswith(".csv"):
+                continue
+            path = os.path.join(dirpath, name)
+            mtime = os.path.getmtime(path)
+            if mtime < since_epoch or (until_epoch is not None and mtime > until_epoch):
+                continue
+            os.makedirs(dest, exist_ok=True)
+            target = os.path.join(dest, name)
+            shutil.copy2(path, target)
+            copied.append({"name": name, "size": os.path.getsize(target), "mtime_epoch": round(mtime, 3)})
+    if copied:
+        index_path = os.path.join(dest, "index.json")
+        with open(index_path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump({"schema": "perf-sampler-index/0", "files": copied}, f, ensure_ascii=False, indent=1)
+    return copied
+
+
 def project_memreport_dir(uproject):
     """工程的 MemReport 输出目录（引擎写在 <Project>/Saved/Profiling/MemReports/<Level>-<Platform>-<date>/）。"""
     return os.path.join(os.path.dirname(os.path.abspath(uproject)), "Saved", "Profiling", "MemReports")
@@ -196,6 +226,9 @@ def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
     if rc != 0:
         print("[capture] FAILED: harness reported failure (assert / early exit / startup timeout)")
         return 2
+    samples = archive_sampler(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
+    if samples:
+        print("[capture] sampler archived: %s" % ", ".join(s["name"] for s in samples))
     memreports = archive_memreports(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
     if memreports:
         print("[capture] memreport archived: %s" % ", ".join(m["name"] for m in memreports))

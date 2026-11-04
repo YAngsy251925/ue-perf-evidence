@@ -359,6 +359,16 @@ def main(argv=None) -> int:
     ap.add_argument("--manifest-a", default=None, help="A 侧 manifest（默认 <run_a>/manifest.json）")
     ap.add_argument("--manifest-b", default=None, help="B 侧 manifest（默认 <run_b>/manifest.json）")
     ap.add_argument("--ue-root", default=None, help="窗口导出使用的 UE 根目录")
+    ap.add_argument("--fail-on", default="none", choices=("none", "regression", "significant"),
+                    help="CI 闸门：none 只报告 / regression 变慢才拦 / significant 变慢或变快都拦")
+    ap.add_argument("--max-delta-ms", type=float, default=None,
+                    help="预算闸门：Δmean 超过这个毫秒数就拦（与显著性无关）")
+    ap.add_argument("--max-delta-pct", type=float, default=None,
+                    help="预算闸门：Δmean 相对 A 均值超过这个百分比就拦")
+    ap.add_argument("--strict", action="store_true",
+                    help="数据不足（n 不够 / 噪声门不合格）时也算失败（退出码 2）")
+    ap.add_argument("--json-line", action="store_true",
+                    help="额外打一行 JSON 摘要（给 CI 记录 / PR 评论用）")
     args = ap.parse_args(argv)
 
     if args.group_a and args.group_b:
@@ -378,7 +388,12 @@ def main(argv=None) -> int:
         require_trace = not args.significance_only
         for run_dir in run_dirs:
             run_dir = os.path.abspath(run_dir)
-            manifest_path = manifest_arg or os.path.join(run_dir, "manifest.json")
+            # 允许直接把 manifest.json 路径当 run 传（CI 的 manifests-only 包解压后就是这种形态）
+            if manifest_arg is None and run_dir.lower().endswith("manifest.json"):
+                manifest_path = run_dir
+                run_dir = os.path.dirname(run_dir)
+            else:
+                manifest_path = manifest_arg or os.path.join(run_dir, "manifest.json")
             if not os.path.isfile(manifest_path):
                 print("[error] %s: manifest not found: %s（先运行 perfctl manifest <run_dir>）"
                       % (key, manifest_path))
@@ -417,7 +432,35 @@ def main(argv=None) -> int:
         print("  %s" % significance.verdict_text(sig))
     for w in diff["warnings"]:
         print("  warning: %s" % w)
-    return 0
+
+    gate = significance.gate(sig, fail_on=args.fail_on, max_delta_ms=args.max_delta_ms,
+                             max_delta_pct=args.max_delta_pct, strict=args.strict) if sig else {
+        "exit_code": significance.EXIT_USAGE if args.strict else 0,
+        "decision": "insufficient_data",
+        "reasons": ["没有 significance 段（两侧缺 p50）"]}
+    diff["gate"] = gate
+    with open(os.path.join(args.out, "perf_diff.json"), "w", encoding="utf-8", newline="\n") as f:
+        json.dump(diff, f, ensure_ascii=False, indent=1)
+
+    for reason in gate["reasons"]:
+        print("  gate: %s" % reason)
+    print("  gate 结论：%s（exit=%d）" % (gate["decision"], gate["exit_code"]))
+
+    if args.json_line:
+        ga = (sig or {}).get("groups", {}).get("a", {})
+        gb = (sig or {}).get("groups", {}).get("b", {})
+        line = {
+            "decision": gate["decision"], "exit": gate["exit_code"],
+            "verdict": (sig or {}).get("verdict"), "status": (sig or {}).get("status"),
+            "delta_mean_ms": (sig or {}).get("delta_mean"),
+            "threshold_ms": (sig or {}).get("threshold"), "mde80_ms": (sig or {}).get("mde_80"),
+            "n_a": ga.get("n"), "n_b": gb.get("n"),
+            "cv_a_pct": ga.get("cv_pct"), "cv_b_pct": gb.get("cv_pct"),
+            "max_delta_ms": args.max_delta_ms, "max_delta_pct": args.max_delta_pct,
+            "fail_on": args.fail_on,
+        }
+        print("PERF_GATE_JSON " + json.dumps(line, ensure_ascii=False, sort_keys=True))
+    return gate["exit_code"]
 
 
 if __name__ == "__main__":

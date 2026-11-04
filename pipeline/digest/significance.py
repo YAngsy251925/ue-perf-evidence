@@ -249,3 +249,70 @@ def verdict_text(result, unit="ms"):
     if result.get("status") == "noise_gate_failed":
         return "只报数值：组内 CV 未过 %.1f%% 噪声门（R9）" % NOISE_CV_PCT
     return "不下结论（%s）" % result.get("status")
+
+
+# ---------------------------------------------------------------- CI 闸门（M6.4）
+
+EXIT_PASS = 0
+EXIT_USAGE = 2
+EXIT_REGRESSION = 3
+EXIT_IMPROVEMENT = 4
+
+
+def gate(result, fail_on="none", max_delta_ms=None, max_delta_pct=None, strict=False):
+    """把 R9 判定翻译成 CI 闸门结论（纯函数，便于单测）。
+
+    fail_on:
+      none        只报告，永远放行（默认；本地分析用）
+      regression  B 显著变慢才拦（最常用）
+      significant B 显著变慢或显著变快都拦（防止"改善"也是意外行为）
+    max_delta_*: 预算闸门，与显著性无关——Δmean 超过预算就算没超噪声也拦（B 更慢方向）。
+    strict: 数据不足（n 不够 / 噪声门不合格）时从"放行 + 警告"变成"拦"（EXIT_USAGE），
+            CI 上想让采集异常暴露出来时打开。
+
+    返回 {exit_code, decision, reasons[]}；decision ∈ pass | regression | improvement |
+    over_budget | insufficient_data。
+    """
+    reasons = []
+    verdict = (result or {}).get("verdict")
+    status = (result or {}).get("status") or "unknown"
+    delta = (result or {}).get("delta_mean")
+    unit = (result or {}).get("unit", "ms")
+
+    if status != "ok" or verdict in (None, "no_conclusion"):
+        reasons.append("数据不足以判定（status=%s）：%s" % (status, "；".join((result or {}).get("notes") or []) or "无细节"))
+        if strict:
+            return {"exit_code": EXIT_USAGE, "decision": "insufficient_data", "reasons": reasons}
+        reasons.append("按非 strict 模式放行（CI 不会因采集异常变红）")
+        return {"exit_code": EXIT_PASS, "decision": "insufficient_data", "reasons": reasons}
+
+    # 预算闸门优先：即使落在噪声内，超预算也要拦
+    over_budget = False
+    if delta is not None and delta > 0:
+        base = ((result.get("groups") or {}).get("a") or {}).get("mean")
+        if max_delta_ms is not None and delta > float(max_delta_ms):
+            over_budget = True
+            reasons.append("Δmean %+.3f %s 超过预算 %.3f %s" % (delta, unit, float(max_delta_ms), unit))
+        if max_delta_pct is not None and base:
+            pct = 100.0 * delta / base
+            if pct > float(max_delta_pct):
+                over_budget = True
+                reasons.append("Δmean %+.2f%%（相对 A 均值）超过预算 %.2f%%" % (pct, float(max_delta_pct)))
+    if over_budget:
+        return {"exit_code": EXIT_REGRESSION, "decision": "over_budget", "reasons": reasons}
+
+    if fail_on == "none":
+        reasons.append("fail-on=none：只报告不拦截")
+        return {"exit_code": EXIT_PASS, "decision": "pass", "reasons": reasons}
+    if verdict == "b_slower":
+        reasons.append("B 显著变慢：Δmean %+.3f %s > 阈值 %.3f %s"
+                       % (delta, unit, result.get("threshold") or 0.0, unit))
+        return {"exit_code": EXIT_REGRESSION, "decision": "regression", "reasons": reasons}
+    if verdict == "b_faster":
+        reasons.append("B 显著变快：Δmean %+.3f %s" % (delta, unit))
+        code = EXIT_IMPROVEMENT if fail_on == "significant" else EXIT_PASS
+        if code == EXIT_PASS:
+            reasons.append("fail-on=regression：改善不拦截")
+        return {"exit_code": code, "decision": "improvement", "reasons": reasons}
+    reasons.append("在噪声内（|Δmean| ≤ 阈值 %.3f %s）" % (result.get("threshold") or 0.0, unit))
+    return {"exit_code": EXIT_PASS, "decision": "pass", "reasons": reasons}

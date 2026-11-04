@@ -70,6 +70,15 @@ python perfctl.py capture harness/profiles/memory.json runs/<id>     # memreport
 python perfctl.py digest memory runs/<id> --out runs/<id>/mem
 python perfctl.py digest allocs runs/<id> --out runs/<id>/allocs --rule aAf --max 20000   # 需要 trace 带 memory 通道
 
+# 每帧采样器校准（M5.1b）：引擎自报 busy vs trace 推导 busy
+python perfctl.py capture harness/profiles/measure_sampler.json runs/<id>   # exec_cmds 带 PerfEvidence.Sampler 1
+python perfctl.py digest bound runs/<id> --out runs/<id>/bound --sampler
+python -m pipeline.digest.views.sampler runs/<id> --out runs/<id>/sampler   # 只看采样器
+
+# CI 闸门（M6.4）：R9 判定落成退出码（0 通过 / 3 变慢拦截 / 4 显著改善 / 2 数据不足）
+python tools/pack_manifests.py --out bundle/ --root runs --runs A1 A2 A3 A4 A5 B1 B2 B3 B4 B5
+python perfctl.py diff cpu -a bundle/A1 bundle/A2 bundle/A3 bundle/A4 bundle/A5                           -b bundle/B1 bundle/B2 bundle/B3 bundle/B4 bundle/B5         --significance-only --fail-on regression --json-line --out artifacts/perf-gate
+
 # 原始证据行（perf_evidence）：把结论下钻成行
 python perfctl.py evidence runs/<id> --ref "timer:PerfEvidenceRegress@stats" --out runs/<id>/ev --page 1 --limit 200 --b2
 python perfctl.py evidence runs/<id> --ref "frame:700" --out runs/<id>/ev
