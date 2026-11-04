@@ -50,3 +50,39 @@ python tools/session_cost.py                       # 最近会话，按回合
 python tools/session_cost.py --turn 40             # 只看某一回合
 python tools/session_cost.py --json                # 给脚本用
 ```
+
+---
+
+## 实测二：指定 trace 的完整分析（2026-11-05 01:48–01:51）
+
+**输入**：用户指定 `20261105_012713.utrace`（542 MB / 439.6 s / 6353 帧）。
+**步骤**（4 步工具调用，无返工）：
+
+```bash
+perfctl ingest --trace <012713> --run runs/m8_9/t012713 --log <Lyra.log> --mode packaged
+perfctl digest cpu   runs/m8_9/t012713 --out runs/m8_9/cpu
+perfctl digest bound runs/m8_9/t012713 --out runs/m8_9/bound --b2
+# （读结论 + 记录成本）
+```
+
+| 指标 | 值 |
+|---|---|
+| **input（未命中缓存）** | **+1,126 token** |
+| **output** | **+878 token** |
+| cacheRead | +2,081,920 token（4 步 × ≈52 万上下文） |
+| 墙钟耗时 | ≈ 3 分（ingest 含 Insights 导出 ~90 s，cpu ~20 s，bound+b2 ~70 s） |
+| 必读产物 | `cpu/perf_digest.md` 3.8 KB + `bound/perf_digest.md` 2.2 KB ≈ **6 KB ≈ 2.5k token** |
+
+**结论**：一次"给定 trace 的完整分析"的**真实增量约 2k token**（input+output）；
+同一条分析在**长会话**里要额外背着 4 × 52 万的 cacheRead（单价低但会累积）。
+若在新会话里做同样的事，cacheRead 会降一到两个数量级。
+
+### 判定结果（顺带留档）
+
+- 帧：439.6 s / 6353 帧，p50 26.39 ms，p99 105.8 ms，max 992 ms。
+- bound：GT/RT/RHI 三线 busy 都 ≈ 31.9 ms（100%），GPU 28.31 ms（88.8%）；
+  按自耗时 **GT 22.21 ms/帧**（次名 RT 11.67 的 1.9 倍）→ 工作量在 GameThread；
+  fence 每帧等待 19.2 ms（占帧间隔 60%）→ GPU 队列内部有跨队列等待。
+- cpu：`WinPumpMessages` 19.0%、`Slate::Prepass` 14.7%、`Slate_PaintSlowPath` 13.1%、
+  `FEngineLoop_UpdateTimeAndHandleMaxTickRate` 5.8%、`Mass…Runner Task` 5.3%
+  → Slate（UI）合计约 47%，无单一热点。
