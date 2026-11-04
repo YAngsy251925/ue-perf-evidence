@@ -1444,6 +1444,131 @@ static void EmitLoad(const TraceServices::IAnalysisSession& Session, FOutputDevi
 		(unsigned long long)FileRows, (unsigned long long)RequestRows);
 }
 
+// frame：单帧 scope 树（M5.4）。
+// PLAN 原来的 5.4 写的是"dumpframe / dumpevents 解析器"，但 5.8 里没有这两个命令
+// （Engine/Source 全量 grep 与 UnrealEditor-*.dll 的 strings 都没有），所以改走
+// 我们自己的数据面：用 IFrameProvider 定位第 N 帧的 [start,end]，再在该线程 timeline 上
+// 按深度栈把这一帧的 scope 树原样吐出来（name / depth / duration / self）。
+static void EmitFrameTree(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
+	const FString& TracePath, const FString& OutPath, int32 FrameIndex, const FString& ThreadName,
+	int32 Limit)
+{
+	const TraceServices::IFrameProvider& Frames = TraceServices::ReadFrameProvider(Session);
+	const uint64 GameCount = Frames.GetFrameCount(TraceFrameType_Game);
+	if (GameCount == 0)
+	{
+		Ar.Logf(TEXT("PERF_ERR no game frames in this trace"));
+		return;
+	}
+	const int32 Index = FMath::Clamp(FrameIndex, 0, (int32)GameCount - 1);
+	double FrameStart = 0.0, FrameEnd = 0.0;
+	Frames.EnumerateFrames(TraceFrameType_Game, (uint64)Index, (uint64)Index + 1,
+		[&FrameStart, &FrameEnd](const TraceServices::FFrame& Frame)
+		{
+			FrameStart = Frame.StartTime;
+			FrameEnd = Frame.EndTime;
+		});
+
+	const TraceServices::ITimingProfilerProvider* Timing = TraceServices::ReadTimingProfilerProvider(Session);
+	const TraceServices::ITimingProfilerTimerReader& Reader = Timing->GetTimerReader();
+	uint32 ThreadId = 0, TimelineIndex = 0;
+	if (!Timing || !ResolveThreadTimeline(Session, *Timing, ThreadName, ThreadId, TimelineIndex))
+	{
+		Ar.Logf(TEXT("PERF_ERR no cpu timeline for thread %s"), *ThreadName);
+		return;
+	}
+
+	struct FRaw
+	{
+		FString Name;
+		int32 Depth = 0;
+		double Begin = 0.0;
+		double End = 0.0;
+	};
+	TArray<FRaw> Scopes;
+	struct FOpen { uint32 TimerIndex; double Begin; double End; double ChildSum; int32 Depth; };
+	TArray<FOpen> Open;
+	double SumSelf = 0.0;
+	int32 StatNamed = 0;
+	int32 ScopeCount = 0;
+
+	auto NameOf = [&Reader](uint32 Index2) -> FString
+	{
+		const TraceServices::FTimingProfilerTimer* T = Reader.GetTimer(Index2);
+		return (T && T->Name) ? FString(T->Name) : FString(TEXT("<unknown>"));
+	};
+	auto CloseTop = [&](double /*unused*/)
+	{
+		if (Open.Num() == 0) { return; }
+		const FOpen Top = Open.Pop();
+		const double Duration = FMath::Max(0.0, Top.End - Top.Begin);
+		const double Self = FMath::Max(0.0, Duration - Top.ChildSum);
+		SumSelf += Self;
+		if (Open.Num() > 0) { Open.Last().ChildSum += Duration; }
+		FRaw Row;
+		Row.Name = NameOf(Top.TimerIndex);
+		Row.Depth = Top.Depth;
+		Row.Begin = Top.Begin;
+		Row.End = Top.End;
+		Scopes.Add(Row);
+		if (Row.Name.StartsWith(TEXT("STAT_"))) { ++StatNamed; }
+		++ScopeCount;
+	};
+
+	Timing->ReadTimeline(TimelineIndex,
+		[&](const TraceServices::ITimingProfilerProvider::Timeline& TL)
+		{
+			TL.EnumerateEvents(FrameStart, FrameEnd,
+				[&](double S, double E, uint32 Depth, const TraceServices::FTimingProfilerEvent& Ev)
+					-> TraceServices::EEventEnumerate
+				{
+					while (Open.Num() > (int32)Depth) { CloseTop(0.0); }
+					FOpen New;
+					New.TimerIndex = Ev.TimerIndex;
+					New.Begin = S;
+					New.End = E;
+					New.Depth = (int32)Depth;
+					Open.Push(New);
+					return TraceServices::EEventEnumerate::Continue;
+				});
+			while (Open.Num() > 0) { CloseTop(0.0); }
+		});
+
+	// 按开始时间排序，depth 大的在前（同起点时先子后父），便于阅读
+	Scopes.Sort([](const FRaw& A, const FRaw& B)
+	{
+		if (A.Begin != B.Begin) { return A.Begin < B.Begin; }
+		return A.Depth > B.Depth;
+	});
+
+	const double FrameSpan = FMath::Max(1e-9, FrameEnd - FrameStart);
+	FString Out = FString::Printf(
+		TEXT("{\"schema\":\"perf-b2-frame/0\",\"trace\":\"%s\",\"thread\":\"%s\",")
+		TEXT("\"frame\":{\"index\":%d,\"count\":%llu,\"start_s\":%.6f,\"end_s\":%.6f,\"duration_ms\":%.4f},")
+		TEXT("\"scope_count\":%d,\"stat_named\":%d,\"stat_named_pct\":%.2f,")
+		TEXT("\"sum_self_ms\":%.4f,\"self_over_frame\":%.4f,\"emitted\":%d,\"scopes\":["),
+		*JsonEscape(*TracePath), *JsonEscape(*ThreadName),
+		Index, (unsigned long long)GameCount, FrameStart, FrameEnd, FrameSpan * 1000.0,
+		ScopeCount, StatNamed, ScopeCount > 0 ? 100.0 * StatNamed / ScopeCount : 0.0,
+		SumSelf * 1000.0, SumSelf / FrameSpan, FMath::Min(ScopeCount, Limit > 0 ? Limit : ScopeCount));
+
+	int32 Emitted = 0;
+	for (const FRaw& Row : Scopes)
+	{
+		if (Limit > 0 && Emitted >= Limit) { break; }
+		if (Emitted > 0) { Out += TEXT(","); }
+		Out += FString::Printf(
+			TEXT("{\"name\":\"%s\",\"depth\":%d,\"begin_ms\":%.4f,\"duration_ms\":%.4f}"),
+			*JsonEscape(*Row.Name), Row.Depth, (Row.Begin - FrameStart) * 1000.0,
+			(Row.End - Row.Begin) * 1000.0);
+		++Emitted;
+	}
+	Out += TEXT("]}");
+	WriteJson(Ar, OutPath, Out);
+	Ar.Logf(TEXT("PERF_FRAME index=%d spans=%d stat_named=%d self=%.3fms"),
+		Index, ScopeCount, StatNamed, SumSelf * 1000.0);
+}
+
 // TraceDigestPerf 的实现（-run=TraceDigestPerf 经 UTraceDigestPerfCommandlet 进来）。
 //   mode 为空（默认）：输出 trace 里以 prefix 开头的书签（M2.2 的 coverage 边界，capture.py 在用）
 //   mode=frames      ：帧轨道（Game / Rendering 各一条，index/start/end/duration）
@@ -1475,6 +1600,12 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	}
 	const FString ThreadName = ParseArg(Params, TEXT("thread"));
 	const FString TimerName = ParseArg(Params, TEXT("timer"));
+	int32 FrameIndex = 0;
+	{
+		// 键名不能叫 "frame"：token 扫描会先命中 "mode frame" 里的那个 frame
+		const FString Text = ParseArg(Params, TEXT("frameindex"));
+		if (!Text.IsEmpty()) { FrameIndex = FCString::Atoi(*Text); }
+	}
 	if (TracePath.IsEmpty()) { Ar.Logf(TEXT("PERF_ERR missing trace=<file>")); return; }
 
 	ITraceServicesModule& Module = FModuleManager::LoadModuleChecked<ITraceServicesModule>(TEXT("TraceServices"));
@@ -1496,6 +1627,12 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	if (Mode == TEXT("timers"))
 	{
 		EmitTimers(*Session, Ar, TracePath, OutPath, Limit);
+		Ar.Logf(TEXT("PERF_DONE"));
+		return;
+	}
+	if (Mode == TEXT("frame"))
+	{
+		EmitFrameTree(*Session, Ar, TracePath, OutPath, FrameIndex, ThreadName, Limit);
 		Ar.Logf(TEXT("PERF_DONE"));
 		return;
 	}

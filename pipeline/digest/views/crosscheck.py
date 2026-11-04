@@ -112,7 +112,7 @@ def load_window(run_dir, kind="coverage"):
     return None, None
 
 
-def trace_frame_intervals(run_dir, window):
+def trace_frame_intervals(run_dir, window=None):
     """窗口内的 game 帧 interval（毫秒）；直接用 extract/frame_tracks.csv。"""
     from pipeline.caliber import frame_probe
     extract = os.path.join(run_dir, "extract")
@@ -130,7 +130,7 @@ def trace_frame_intervals(run_dir, window):
     for i in range(1, len(frames)):
         start, prev_end = frames[i][0], None
         prev = frames[i - 1][0]
-        if start < window[0] or start > window[1]:
+        if window and (start < window[0] or start > window[1]):
             continue
         delta = (start - prev) * 1000.0
         if delta > 0 and math.isfinite(delta):
@@ -209,6 +209,25 @@ def build(run_dir, window_kind="coverage"):
         return {"csv": round(float(csv_v), 4), "trace": round(float(trace_v), 4),
                 "diff_pct": round(diff, 3), "verdict": verdict(diff), "unit": unit}
 
+    # PresentMon（M5.3）：生命周期级对比（整条 trace 的帧间隔 p50 vs PresentMon 的 p50）
+    pm_path = os.path.join(run_dir, "presentmon", "presentmon.csv")
+    result["presentmon"] = None
+    if os.path.isfile(pm_path):
+        from pipeline.capture import presentmon
+        summary = presentmon.summarize(pm_path, "UnrealEditor-Cmd.exe")
+        all_intervals = trace_frame_intervals(run_dir, None)
+        result["presentmon"] = {
+            "file": "presentmon/presentmon.csv",
+            "app": summary.get("picked"),
+            "columns": summary.get("columns"),
+            "apps": {k: {"rows": v["rows"],
+                         "ms_between_presents": v["ms_between_presents"]}
+                     for k, v in (summary.get("apps") or {}).items()},
+            "compare": presentmon.compare(summary, _stats(all_intervals)["p50"], len(all_intervals)),
+        }
+    else:
+        result["warnings"].append("没有 presentmon/presentmon.csv（capture 未启用或工具缺失）")
+
     result["compare"]["frame_time"] = compare(csv_ft, tr_ft, "ms")
     result["compare"]["gpu_time"] = compare(csv_gpu, b2_gpu, "ms")
     return result
@@ -258,6 +277,19 @@ def render_md(r):
                         "-" if c.get("trace") is None else "%.3f ms" % c["trace"],
                         "-" if c.get("diff_pct") is None else "%+.2f%%" % c["diff_pct"],
                         c.get("verdict", "unknown")))
+    lines.append("")
+    pm = r.get("presentmon") or {}
+    cmp = pm.get("compare") or {}
+    lines += ["## PresentMon（第三方仲裁，生命周期级）", ""]
+    if pm:
+        lines.append("- 应用：`%s`；PresentMon 帧数 %s；CSV 列数 %s"
+                     % (pm.get("app"), cmp.get("presentmon_frames"), pm.get("columns")))
+        lines.append("- p50：PresentMon %s ms vs trace 整条 %s ms → **%s**（%s）"
+                     % (cmp.get("presentmon_p50"), cmp.get("trace_p50"), cmp.get("verdict"),
+                        "-" if cmp.get("diff_pct") is None else "%+.2f%%" % cmp["diff_pct"]))
+        lines.append("- 口径：PresentMon 覆盖整个进程生命周期（含启动/退出段），不做逐帧对齐")
+    else:
+        lines.append("- 没有 PresentMon 数据")
     lines.append("")
     if r["warnings"]:
         lines += ["## 警告"] + ["- %s" % w for w in r["warnings"]] + [""]

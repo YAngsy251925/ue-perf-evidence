@@ -65,6 +65,13 @@ python perfctl.py diff cpu <run_a> <run_b> --out <dir> [--trace-a FILE] [--trace
 python perfctl.py diff cpu -a R1 R2 R3 R4 R5 -b S1 S2 S3 S4 S5 --out <dir>    # 组形态（M3.3）
 python perfctl.py diff cpu -a ... -b ... --out <dir> --significance-only       # 只读 manifest 的 p50，CI 门槛
 
+# 单帧 scope 树（M5.4）：B2 读第 N 帧的整棵树 + 自耗时 + 名字覆盖率
+python perfctl.py digest single_frame runs/<id> --frame 700 --out runs/<id>/frame700 --b2
+
+# PresentMon（M5.3）：capture 会自动起停并写 <run_dir>/presentmon/；也可单独跑
+python -m pipeline.capture.presentmon runs/x/pm.csv --seconds 60
+python -m pipeline.capture.presentmon --parse runs/x/pm.csv --process UnrealEditor-Cmd.exe
+
 # 三路交叉校验（M5.2）：CSV Profiler ↔ trace 帧间隔 ↔ B2 GPU
 # capture 会把 CSV Profiler 产物归档到 <run_dir>/csv/；历史 run 用 tools/backfill_csv.py 回填
 python perfctl.py digest crosscheck runs/<id> --out runs/<id>/crosscheck --b2

@@ -25,12 +25,12 @@ HOST_DIR = os.path.join(REPO, "host", "TraceDigestProbe")
 DEFAULT_UE_ROOT = r"D:\Epic\Games\UE_5.8"
 
 
-MODES = ("frames", "timers", "timerstats", "callers", "gpu", "counters", "regions",
+MODES = ("frames", "frame", "timers", "timerstats", "callers", "gpu", "counters", "regions",
          "logs", "channels", "tasks", "memory", "allocations", "net", "load")
 
 
 def build_cmdline(mode, trace, out_path, log_path, limit=0, start=None, end=None,
-                  thread=None, timer=None, ue_root=None):
+                  thread=None, timer=None, frame=None, ue_root=None):
     """拼出引擎命令行（写进一次性 bat 的那一行）。纯函数，便于单测。
 
     所有自定义参数用**空格形态**（P19：cmd 把 '=' 当参数分隔符）。
@@ -51,13 +51,16 @@ def build_cmdline(mode, trace, out_path, log_path, limit=0, start=None, end=None
         parts += ["thread", thread]
     if timer:
         parts += ["timer", '"%s"' % timer]
+    if frame is not None:
+        # 键名是 frameindex：token 扫描会先把 "mode frame" 里的 frame 命中掉
+        parts += ["frameindex", str(int(frame))]
     parts += ["-unattended", "-nosplash", "-nullrhi", "-nosound", "-stdout",
               '-ABSLOG="%s"' % log_path]
     return " ".join(parts)
 
 
 def run_mode(mode, trace, out_path, limit=0, ue_root=None, timeout=600,
-             start=None, end=None, thread=None, timer=None):
+             start=None, end=None, thread=None, timer=None, frame=None):
     """跑一次 commandlet，返回 (ok, 日志文本)。日志里的 PERF_ 行是唯一的成功标志。"""
     trace = os.path.abspath(trace)
     out_path = os.path.abspath(out_path)
@@ -69,7 +72,7 @@ def run_mode(mode, trace, out_path, limit=0, ue_root=None, timeout=600,
     # 直接写引擎命令行（不经 run_cmdlet.bat）：bat 里 %~dp0 在 call 嵌套下会指错目录。
     bat = os.path.splitext(out_path)[0] + ".bat"
     line = build_cmdline(mode, trace, out_path, log_path, limit, start, end,
-                         thread, timer, ue_root)
+                         thread, timer, frame, ue_root)
     with io.open(bat, "w", encoding="ascii", newline="\r\n") as f:
         f.write("@echo off\r\n%s\r\n" % line)
     proc = subprocess.run(["cmd", "/c", bat], capture_output=True, text=True, encoding="utf-8",
@@ -199,6 +202,7 @@ def main(argv=None) -> int:
     ap.add_argument("--end", type=float, default=None, help="timerstats 窗口终点（秒）")
     ap.add_argument("--thread", default=None, help="线程名（timerstats / callers）")
     ap.add_argument("--timer", default=None, help="callers 的目标 timer 名")
+    ap.add_argument("--frame", type=int, default=None, help="frame 模式的帧序号（0 起）")
     ap.add_argument("--compare-csv", default=None, help="与 A 路导出 CSV 对账（timerstats）")
     ap.add_argument("--ue-root", default=None)
     a = ap.parse_args(argv)
@@ -207,7 +211,8 @@ def main(argv=None) -> int:
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "b2_%s.json" % a.mode)
     ok, text = run_mode(a.mode, a.trace, out_path, a.limit, a.ue_root,
-                        start=a.start, end=a.end, thread=a.thread, timer=a.timer)
+                        start=a.start, end=a.end, thread=a.thread, timer=a.timer,
+                        frame=a.frame)
     if not ok:
         print("[error] commandlet 失败（看 %s）" % os.path.splitext(out_path)[0] + ".log")
         for line in text.splitlines():

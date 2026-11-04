@@ -10,6 +10,7 @@
   python perfctl.py digest gpu    <run_dir> --out DIR [--b2]                     # GPU 视图 v0（M4.0/M4.3）
   python perfctl.py digest bound  <run_dir> --out DIR [--b2] [--target-fps N]    # bound 判定（M5.1）
   python perfctl.py digest crosscheck <run_dir> --out DIR [--b2] [--window coverage|stats]  # CSV/trace/B2 三路校验（M5.2）
+  python perfctl.py digest single_frame <run_dir> --frame N --out DIR [--thread T] [--limit N]  # 单帧 scope 树（M5.4）
   python perfctl.py digest hitch  <run_dir> --out DIR                            # hitch 视图（M2.3/M2.4）
   python perfctl.py diff cpu      <run_a> <run_b> --out DIR [--trace-a F] [--trace-b F]  # v0（M1.6）
   python perfctl.py manifest      <run_dir> [--log FILE] [--extract DIR] [--trace FILE] [--out FILE]
@@ -28,7 +29,7 @@ import sys
 from pipeline.capture import capture, profile, session
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
-from pipeline.digest.views import bound, cpu, crosscheck, gpu, hitch
+from pipeline.digest.views import bound, cpu, crosscheck, gpu, hitch, single_frame
 from pipeline.digest import runs
 from pipeline.extract import b2, insights_export
 
@@ -52,6 +53,8 @@ def main(argv=None) -> int:
             return bound.main(rest[1:])
         if rest[:1] == ["crosscheck"]:
             return crosscheck.main(rest[1:])
+        if rest[:1] == ["single_frame"]:
+            return single_frame.main(rest[1:])
         if rest[:1] != ["cpu"]:
             print("usage: perfctl digest cpu <run_dir|stats.csv> --out DIR\n"
                   "       perfctl digest gpu <run_dir> --out DIR [--b2]\n"

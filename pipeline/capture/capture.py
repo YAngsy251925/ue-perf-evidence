@@ -104,6 +104,44 @@ def archive_csv(run_dir, uproject, since_epoch, until_epoch=None):
     return copied
 
 
+def start_presentmon(run_dir, seconds):
+    """在 harness 之前起 PresentMon（第三方帧时间仲裁者）；工具缺失或起不来只警告。
+
+    带 --process_name 需要提权（实测直接被拒），所以全量采集、解析侧按 Application 匹配。
+    """
+    from pipeline.capture import presentmon
+    if not presentmon.available():
+        return None, None
+    csv_path = os.path.join(run_dir, "presentmon", "presentmon.csv")
+    try:
+        proc, _cmd = presentmon.start(csv_path, process_name=None, seconds=int(seconds) + 60)
+    except OSError as exc:
+        print("[capture] WARNING: PresentMon failed to start (%s)" % exc)
+        return None, None
+    print("[capture] presentmon started (pid=%d) -> %s" % (proc.pid, csv_path.replace("\\", "/")))
+    return proc, csv_path
+
+
+def finish_presentmon(run_dir, proc, csv_path):
+    """收尾：等 PresentMon 退出、解析、写 presentmon/index.json；失败只警告。"""
+    if proc is None or csv_path is None:
+        return
+    from pipeline.capture import presentmon
+    rc, err = presentmon.stop(proc, timeout=30)
+    if not os.path.isfile(csv_path):
+        print("[capture] WARNING: PresentMon wrote no CSV (exit=%s%s)"
+              % (rc, (", " + err.strip().splitlines()[0]) if err.strip() else ""))
+        return
+    summary = presentmon.summarize(csv_path, "UnrealEditor-Cmd.exe")
+    summary["exit_code"] = rc
+    index_path = os.path.join(run_dir, "presentmon", "index.json")
+    with open(index_path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=1)
+    bp = ((summary.get("apps") or {}).get(summary.get("picked")) or {}).get("ms_between_presents") or {}
+    print("[capture] presentmon: picked=%s frames=%s p50=%s" %
+          (summary.get("picked"), bp.get("n"), bp.get("p50")))
+
+
 def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
     snapshot = P.prepare(name, run_dir, uproject, ue_root, map_override)
     budget, fallback_s = snapshot["harness"]["startup_budget_s"], snapshot["harness"]["run_after_ready_s"]
@@ -112,7 +150,9 @@ def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
     print("[capture] %s (%s class=%s)" % (run_dir, snapshot["profile_name"], snapshot["profile_class"]))
     print("[capture] harness: %s" % " ".join(cmd[1:]))
     launch_epoch = time.time()
+    pm_proc, pm_csv = start_presentmon(run_dir, budget + fallback_s)
     rc, output = run(cmd, budget + fallback_s + 180)
+    finish_presentmon(run_dir, pm_proc, pm_csv)
     sys.stdout.write(output)
     if rc != 0:
         print("[capture] FAILED: harness reported failure (assert / early exit / startup timeout)")

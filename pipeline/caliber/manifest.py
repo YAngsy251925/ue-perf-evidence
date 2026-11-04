@@ -130,6 +130,15 @@ def apply_coverage(windows, basis, coverage, snapshot, warnings):
     return True
 
 
+def load_presentmon(run_dir):
+    """presentmon/index.json（M5.3 的第三方帧时间）；没有就 None。"""
+    path = os.path.join(run_dir, "presentmon", "index.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -> dict:
     """warmup_frames：显式值 > capture_profile.json 声明的值 > DEFAULT_WARMUP_FRAMES。"""
     warnings = []
@@ -163,6 +172,23 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
     frame_semantics, fs_warnings = build_frame_semantics(
         series, win["windows"], win["basis"], measurable, reason, rhi["rhi_state"])
     warnings += fs_warnings
+    pm = load_presentmon(run_dir)
+    presentmon_block = None
+    if pm:
+        picked = pm.get("picked")
+        app = (pm.get("apps") or {}).get(picked) or {}
+        bp = app.get("ms_between_presents") or {}
+        presentmon_block = {
+            "file": "presentmon/presentmon.csv",
+            "app": picked,
+            "frames": bp.get("n"),
+            "ms_between_presents_p50": bp.get("p50"),
+            "ms_gputime_p50": (app.get("ms_gpu_time") or {}).get("p50"),
+            "columns": pm.get("columns"),
+            "fields": pm.get("fields") or [],
+            "exit_code": pm.get("exit_code"),
+            "note": "PresentMon 生命周期级统计（含启动/退出段），不与 trace 逐帧对齐",
+        }
     desc = describe_command_line(cmd)
     profile_block, conditions_block, cond_warnings = conditions.verify(
         snapshot, log, rhi["rhi_state"], measurable, bridge["statnamedevents_effective"],
@@ -189,7 +215,8 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
         "command_line": cmd,
         "map": desc["map"],
         "mode": desc["mode"],
-        "capabilities": {**capabilities(log.get("build_config")), "csv_profiler": csv_profiler},
+        "capabilities": {**capabilities(log.get("build_config")), "csv_profiler": csv_profiler,
+                         "presentmon": bool(presentmon_block)},
         "trace": {
             "file": display_path(trace_path, run_dir),
             "channels_requested": desc["trace_channels_requested"],
@@ -200,6 +227,7 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
         "windows": win["windows"],
         "window_basis": win["basis"],
         "frame_semantics": frame_semantics,
+        "presentmon": presentmon_block,
         "inputs": {
             "engine_log": display_path(log_path, run_dir) if log else None,
             "extract": display_path(extract, run_dir),
