@@ -8,6 +8,7 @@
   python perfctl.py digest cpu    <run_dir> --out DIR [--thread GameThread] [--b2]  # run 级 digest v1（§5.3；--b2=M4.3 下钻）
   python perfctl.py digest cpu    <stats.csv> --out DIR                          # v0：单 CSV 数字核心
   python perfctl.py digest gpu    <run_dir> --out DIR [--b2]                     # GPU 视图 v0（M4.0/M4.3）
+  python perfctl.py digest bound  <run_dir> --out DIR [--b2] [--target-fps N]    # bound 判定（M5.1）
   python perfctl.py digest hitch  <run_dir> --out DIR                            # hitch 视图（M2.3/M2.4）
   python perfctl.py diff cpu      <run_a> <run_b> --out DIR [--trace-a F] [--trace-b F]  # v0（M1.6）
   python perfctl.py manifest      <run_dir> [--log FILE] [--extract DIR] [--trace FILE] [--out FILE]
@@ -26,7 +27,7 @@ import sys
 from pipeline.capture import capture, profile, session
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
-from pipeline.digest.views import cpu, gpu, hitch
+from pipeline.digest.views import bound, cpu, gpu, hitch
 from pipeline.digest import runs
 from pipeline.extract import b2, insights_export
 
@@ -46,9 +47,12 @@ def main(argv=None) -> int:
             return hitch.main(rest[1:])
         if rest[:1] == ["gpu"]:
             return gpu.main(rest[1:])
+        if rest[:1] == ["bound"]:
+            return bound.main(rest[1:])
         if rest[:1] != ["cpu"]:
             print("usage: perfctl digest cpu <run_dir|stats.csv> --out DIR\n"
-                  "       perfctl digest gpu <run_dir> --out DIR [--b2]")
+                  "       perfctl digest gpu <run_dir> --out DIR [--b2]\n"
+                  "       perfctl digest bound <run_dir> --out DIR [--b2] [--target-fps N]")
             return 2
         rest = rest[1:]
         # 第一个非选项参数是输入：目录 → run 级 v1；CSV 文件 → v0 数字核心

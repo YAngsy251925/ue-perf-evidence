@@ -105,11 +105,23 @@ def fence_summary(b2_gpu, game_window_frames, interval_p50_ms):
 
 
 def verdict(fills, fence, gt_busy_ratio, interval_p50_ms):
-    """确定性判定（阈值见模块 docstring）。返回 (text, confidence, verdict_kind)。"""
+    """确定性判定（阈值见模块 docstring）。返回 (text, confidence, verdict_kind)。
+
+    M5.1 修正（2026-11-04）：判定信号从 max-fill 改为 **Graphics 队列**（present 路径）的 fill——
+    实测 Compute 队列在 A1/B1 两组 trace 都整窗饱和（≈interval 本身），max-fill 会把任何
+    run 误判成 GPU 慢；饱和的非 Graphics 队列降级为上下文注记。
+    """
     with_fill = [f for f in fills if f["fill"] is not None]
-    top = with_fill[0] if with_fill else None
+    graphics = next((f for f in with_fill if (f["name"] or "").lower() == "graphics"), None)
+    if graphics is None:
+        graphics = next((f for f in with_fill if (f["name"] or "").lower() != "copy" and f["fill"] > 0),
+                        with_fill[0] if with_fill else None)
+    top = graphics
     max_fill = top["fill"] if top else 0.0
     top_name = top["name"] if top else "?"
+    saturated = [f["name"] for f in with_fill
+                 if top is None or (f is not top and f["fill"] >= 0.95)]
+    sat_txt = ("；注意 %s 队列整窗饱和（持续后台型，不是 GPU bound 证据）" % "、".join(saturated)) if saturated else ""
     stall_ms = fence.get("stall_per_frame_ms") if fence.get("available") else None
     stall_txt = ("；跨队列 fence 等待平均 %.1f ms/帧（占帧间隔 %.0f%%）" %
                  (stall_ms, 100.0 * fence["stall_ratio"])) if stall_ms is not None else ""
@@ -119,21 +131,21 @@ def verdict(fills, fence, gt_busy_ratio, interval_p50_ms):
     if max_fill >= FILL_CLEAR:
         if gt_busy_ratio is not None and gt_busy_ratio >= GT_SATURATED:
             return ("%s 队列每帧忙 %.1f ms（fill %.2f），但 GT 也接近满载%s：两边并行饱和，"
-                    "瓶颈归属需 bound 判定（M5.1）%s" % (top_name, top["busy_per_frame_ms"], max_fill, gt_txt, stall_txt)
+                    "瓶颈归属需 bound 判定（M5.1）%s%s" % (top_name, top["busy_per_frame_ms"], max_fill, gt_txt, stall_txt, sat_txt)
                     ), "marginal", "both_saturated"
-        return ("GPU 慢：%s 队列每帧忙 %.1f ms，占帧间隔 %.0f%%%s，GPU 侧优先下钻该队列的 pass%s"
-                % (top_name, top["busy_per_frame_ms"], 100.0 * max_fill, gt_txt, stall_txt)
+        return ("GPU 慢：%s 队列每帧忙 %.1f ms，占帧间隔 %.0f%%%s，GPU 侧优先下钻该队列的 pass%s%s"
+                % (top_name, top["busy_per_frame_ms"], 100.0 * max_fill, gt_txt, stall_txt, sat_txt)
                 ), "clear", "gpu_slow"
     if max_fill <= FILL_IDLE:
         if fence.get("significant"):
-            return ("GPU 队列有空转（最忙 %s fill %.2f）但跨队列 fence 等待大（平均 %.1f ms/帧）："
-                    "CPU 等 GPU 的信号/节流，看 fence worst 的时间点回溯%s"
-                    % (top_name, max_fill, stall_ms, gt_txt)), "moderate", "cpu_wait_gpu"
-        return ("GPU 非瓶颈：最忙 %s 队列每帧只忙 %.1f ms（fill %.2f），帧间隔 %.1f ms 大部分不在 GPU%s；"
-                "瓶颈看 CPU 视图" % (top_name, top["busy_per_frame_ms"], max_fill, interval_p50_ms, gt_txt)
+            return ("GPU 队列有空转（%s fill %.2f）但跨队列 fence 等待大（平均 %.1f ms/帧）："
+                    "CPU 等 GPU 的信号/节流，看 fence worst 的时间点回溯%s%s"
+                    % (top_name, max_fill, stall_ms, gt_txt, sat_txt)), "moderate", "cpu_wait_gpu"
+        return ("GPU 非瓶颈：%s 队列每帧只忙 %.1f ms（fill %.2f），帧间隔 %.1f ms 大部分不在 GPU%s%s；"
+                "瓶颈看 CPU 视图" % (top_name, top["busy_per_frame_ms"], max_fill, interval_p50_ms, gt_txt, sat_txt)
                 ), "clear", "gpu_idle"
-    return ("难分：最忙 %s 队列 fill %.2f 在 [%s, %s] 判定带之间%s%s"
-            % (top_name, max_fill, FILL_IDLE, FILL_CLEAR, gt_txt, stall_txt)), "marginal", "unclear"
+    return ("难分：%s 队列 fill %.2f 在 [%s, %s] 判定带之间%s%s%s"
+            % (top_name, max_fill, FILL_IDLE, FILL_CLEAR, gt_txt, stall_txt, sat_txt)), "marginal", "unclear"
 
 
 def build_from_rows(rows, caliber, window_name, warnings, game_window_frames, interval_p50_ms,

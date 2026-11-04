@@ -269,9 +269,10 @@ def prepare_rows(run_dir, manifest, trace, thread="GameThread", ue_root=None, ex
     （not_measurable_digest）。返回 ("ok", 合并后的行, caliber, warnings) 或
     ("blocked", 原因, caliber, warnings)；blocked 只发生在没有统计窗口时，此时不做任何导出。
 
-    P21 净化：Insights 的 -threads= 对 GPU 队列时间线不生效，GameThread 的统计导出从 M1 起
-    就混着 GPU 队列行（实测 Frame/SceneRender 与 GPU1 导出逐字节相同）。GameThread 导出时
-    同一次分析多导一份 GPU1 统计做差集净化；GPU1 缺失（trace 没带 gpu 通道）只记 warning。
+    P21 净化：Insights 的 -threads= 对 GPU 队列时间线不生效，CPU 线程的统计导出从 M1 起
+    就混着 GPU 队列行（实测 Frame/SceneRender 与 GPU1 导出逐字节相同；M5.1 起推广到
+    RenderThread 0 / RHIThread，实测各混 50 行）。导出时同一次分析多导一份 GPU1 统计做
+    差集净化；GPU1 缺失（trace 没带 gpu 通道）只记 warning。GPU 线程自身不净化。
     """
     win_name = manifest["window_basis"].get("stats_window")
     window = manifest["windows"].get(win_name) if win_name else None
@@ -286,7 +287,9 @@ def prepare_rows(run_dir, manifest, trace, thread="GameThread", ue_root=None, ex
 
     threads = [thread]
     gpu_csv_name = None
-    if thread == "GameThread":
+    # P21 净化推广（M5.1）：-threads= 对 GPU 队列时间线不生效，任何 CPU 线程的统计导出
+    # 都会混 GPU 行（RT/RHI 实测各混 50 行、占一半以上）。GPU 线程自身的导出不用净化。
+    if not thread.upper().startswith("GPU"):
         threads = [thread, GPU_THREAD]
         gpu_csv_name = "stats_%s_window.csv" % insights_export.safe_name(GPU_THREAD)
 
