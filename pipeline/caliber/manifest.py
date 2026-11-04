@@ -256,6 +256,8 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
             "exit_code": pm.get("exit_code"),
             "note": "PresentMon 生命周期级统计（含启动/退出段），不与 trace 逐帧对齐",
         }
+    # 外部采集（PIE / Insights 录制 / 打包包）的条件提示由 conditions.verify 统一给，这里只记来源
+    capture_mode = (snapshot or {}).get("capture_mode") or "standalone"
     desc = describe_command_line(cmd)
     profile_block, conditions_block, cond_warnings = conditions.verify(
         snapshot, log, rhi["rhi_state"], measurable, bridge["statnamedevents_effective"],
@@ -270,6 +272,7 @@ def build_manifest(run_dir, log_path, extract, trace_path, warmup_frames=None) -
         "run_id": os.path.basename(os.path.abspath(run_dir)),
         "measurable": measurable,
         "measurable_reason": reason,
+        "capture_mode": capture_mode,
         "profile": profile_block,
         "conditions": conditions_block,
         "engine": {
@@ -372,9 +375,14 @@ def main(argv=None) -> int:
     print("  consistency(Q3): %s" % (c["note"] if c["ok"] is None else "ok=%s rows_delta=%d window_frames_delta=%d" % (
         c["ok"], c["rows_delta"], c["window_frames_delta"])))
     if manifest["profile"]:
-        s = manifest["conditions"]["summary"]
-        print("  profile=%s (%s) conditions: verified=%d failed=%s unchecked=%s" % (
-            manifest["profile"]["name"], manifest["profile"]["class"], s["verified"], s["failed"], s["unchecked"]))
+        s = (manifest["conditions"] or {}).get("summary") or {}
+        if (manifest["conditions"] or {}).get("enforced") is False:
+            print("  profile=%s (%s) 外部采集：条件未强制（conditions.enforced=false）"
+                  % (manifest["profile"]["name"], manifest["profile"]["class"]))
+        else:
+            print("  profile=%s (%s) conditions: verified=%d failed=%s unchecked=%s" % (
+                manifest["profile"]["name"], manifest["profile"]["class"],
+                s.get("verified"), s.get("failed"), s.get("unchecked")))
     for w in manifest["warnings"]:
         print("  warning: %s" % w)
     return 0

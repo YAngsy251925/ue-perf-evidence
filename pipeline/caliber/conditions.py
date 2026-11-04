@@ -59,6 +59,16 @@ def verify(snapshot, log_facts, rhi_state, measurable, bridge_effective, channel
     """返回 (profile 块, conditions 块, warnings)。snapshot 为 None 时返回 (None, None, [])。"""
     if snapshot is None:
         return None, None, []
+    mode = snapshot.get("capture_mode")
+    if mode in ("external", "pie", "packaged"):
+        # 外部采集（PIE / Insights 录制 / 打包包）：我们没参与设条件，逐条"声明 vs 观测"只会有噪声，
+        # 所以这里明确标"未强制"，fact（RHI / measurable / 桥接）仍由 manifest 从日志与 trace 里判。
+        return (
+            {"name": snapshot.get("profile_name") or mode, "class": mode,
+             "sha256": None, "file": None, "conditions": {}},
+            {"enforced": False, "mode": mode, "verified": 0, "failed": [], "unchecked": [],
+             "summary": {"verified": 0, "failed": [], "unchecked": []}},
+            ["外部采集（%s）：采集条件未由本工具强制，manifest 只记录能从日志/trace 观测到的事实（PLAN R2）" % mode])
     profile = snapshot["profile"]
     cond = profile.get("conditions") or {}
     items = []

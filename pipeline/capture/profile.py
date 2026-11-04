@@ -247,9 +247,16 @@ def load_profile(name_or_path: str):
     return profile, path
 
 
-def build_args(profile: dict, run_dir: str, uproject: str, map_override=None) -> list:
-    """profile → UnrealEditor-Cmd 的参数（不含 exe）。路径和 ExecCmds 已加双引号。"""
-    args = ['"%s"' % uproject, map_override or profile["map"], "-game"]
+def build_args(profile: dict, run_dir: str, uproject: str, map_override=None, packaged=False) -> list:
+    """profile → 引擎参数（不含 exe）。路径和 ExecCmds 已加双引号。
+
+    packaged=True：目标是**打包后的包**（Game.exe），不能再传 uproject，也不需要 `-game`
+    （包本身就是游戏）。其余参数（窗口、trace、CSV 事件、ExecAt、ExecCmds）完全一致。
+    """
+    if packaged:
+        args = [map_override or profile["map"]]
+    else:
+        args = ['"%s"' % uproject, map_override or profile["map"], "-game"]
     if profile["rhi"] == "null":
         args.append("-nullrhi")
     window = profile.get("window")
@@ -303,21 +310,30 @@ def harness_timing(profile: dict):
     return stop["startup_budget_s"], profile["conditions"]["duration_s"] + stop["settle_s"]
 
 
-def prepare(name_or_path: str, run_dir: str, uproject=None, ue_root=None, map_override=None) -> dict:
-    """写 <run_dir>/launch.bat 与 <run_dir>/capture_profile.json；返回快照。"""
+def prepare(name_or_path: str, run_dir: str, uproject=None, ue_root=None, map_override=None,
+            game_exe=None) -> dict:
+    """写 <run_dir>/launch.bat 与 <run_dir>/capture_profile.json；返回快照。
+
+    game_exe：给打包后的包可执行文件（如 <Pkg>/Windows/<Game>.exe）。给了就走 packaged 模式：
+    不传 uproject、不加 `-game`，Saved 目录按 <exe dir>/Saved 推断（可用 snapshot["saved_dir"] 覆盖）。
+    """
     profile, path = load_profile(name_or_path)
     run_dir = os.path.abspath(run_dir)
     uproject = os.path.abspath(uproject or DEFAULT_UPROJECT)
     ue_root = ue_root or os.environ.get("UE_ROOT") or DEFAULT_UE_ROOT
-    exe = os.path.join(ue_root, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
+    packaged = bool(game_exe)
+    exe = os.path.abspath(game_exe) if packaged else os.path.join(
+        ue_root, "Engine", "Binaries", "Win64", "UnrealEditor-Cmd.exe")
     for label, value in (("run_dir", run_dir), ("uproject", uproject), ("ue_root", ue_root),
                          ("map", map_override or "")):
         reason = _unsafe(value)
         if reason:
             raise ValueError("%s is not bat-safe (%s): %s (PLAN E3)" % (label, reason, value))
     if not os.path.isfile(exe):
-        raise ValueError("UnrealEditor-Cmd.exe not found: %s (use --ue-root or UE_ROOT)" % exe)
-    if not os.path.isfile(uproject):
+        raise ValueError("%s not found: %s%s" % (
+            "game exe" if packaged else "UnrealEditor-Cmd.exe", exe,
+            "" if packaged else " (use --ue-root or UE_ROOT)"))
+    if not packaged and not os.path.isfile(uproject):
         raise ValueError("uproject not found: %s" % uproject)
     for leftover in ("engine.log", "trace.utrace"):
         if os.path.exists(os.path.join(run_dir, leftover)):
@@ -325,7 +341,7 @@ def prepare(name_or_path: str, run_dir: str, uproject=None, ue_root=None, map_ov
     os.makedirs(run_dir, exist_ok=True)
 
     sha = canonical_sha256(profile)
-    args = build_args(profile, run_dir, uproject, map_override)
+    args = build_args(profile, run_dir, uproject, map_override, packaged=packaged)
     bat = render_bat(exe, args, profile, sha)
     bat_path = os.path.join(run_dir, "launch.bat")
     with open(bat_path, "w", encoding="ascii", newline="") as f:
@@ -341,6 +357,11 @@ def prepare(name_or_path: str, run_dir: str, uproject=None, ue_root=None, map_ov
         "map": map_override or profile["map"],
         "uproject": uproject,
         "ue_root": ue_root,
+        # packaged：不传 uproject、不加 -game；Saved 目录从 exe 推断（<exe dir>/Saved）
+        "capture_mode": "packaged" if packaged else "standalone",
+        "game_exe": exe if packaged else None,
+        "saved_dir": (os.path.join(os.path.dirname(exe), "Saved") if packaged else
+                      os.path.join(os.path.dirname(uproject), "Saved")),
         "exec_commands": exec_commands(profile),
         "args": args,
         "exec_at": exec_at_config(profile),

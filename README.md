@@ -26,8 +26,16 @@ UE 5.8 上、面向 AI agent 的**性能证据管线**：从一次采集（trace
 
 ## 快速开始
 
+采集有三条通路，任选一条（详见 [docs/PLAN.md](docs/PLAN.md) §3）：
+
 ```bash
-# 0) 采集（真实 RHI，会弹 960×540 窗口；smoke 用 nullrhi 只验链路）
+# ① 编辑器里 PIE / Insights 已经录好了 → 只要一份 .utrace（+日志）就能进管线
+python perfctl.py ingest --trace "<Project>/Saved/Profiling/xxx.utrace"        --log "<Project>/Saved/Logs/<Project>.log" --run runs/pie1 --mode pie
+
+# ② 打包后的包（同一套 profile 驱动 Game.exe；不传 uproject、不加 -game）
+python perfctl.py capture harness/profiles/measure.json runs/pkg1        --exe "<Pkg>/Windows/<Game>.exe"
+
+# ③ 编辑器二进制 -game（最可复现的基线，自带 CSV/采样器全集；会弹 960×540 窗口）
 python perfctl.py capture harness/profiles/measure.json runs/r1 --uproject <path>.uproject
 
 # 1) 口径与能力（必须先跑，后面的视图都读它）

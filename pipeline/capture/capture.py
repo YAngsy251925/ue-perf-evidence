@@ -211,8 +211,8 @@ def finish_presentmon(run_dir, proc, csv_path):
           (summary.get("picked"), bp.get("n"), bp.get("p50")))
 
 
-def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
-    snapshot = P.prepare(name, run_dir, uproject, ue_root, map_override)
+def capture(name, run_dir, uproject=None, ue_root=None, map_override=None, game_exe=None):
+    snapshot = P.prepare(name, run_dir, uproject, ue_root, map_override, game_exe=game_exe)
     budget, fallback_s = snapshot["harness"]["startup_budget_s"], snapshot["harness"]["run_after_ready_s"]
     bat = os.path.join(run_dir, "launch.bat").replace("\\", "/")
     cmd = ["bash", HARNESS, bat, run_dir.replace("\\", "/"), str(budget), "-", "-", str(fallback_s)]
@@ -226,16 +226,17 @@ def capture(name, run_dir, uproject=None, ue_root=None, map_override=None):
     if rc != 0:
         print("[capture] FAILED: harness reported failure (assert / early exit / startup timeout)")
         return 2
-    samples = archive_sampler(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
+    saved = snapshot.get("saved_dir") or os.path.join(os.path.dirname(snapshot["uproject"]), "Saved")
+    samples = archive_sampler(run_dir, saved, launch_epoch - 5, time.time() + 5)
     if samples:
         print("[capture] sampler archived: %s" % ", ".join(s["name"] for s in samples))
-    memreports = archive_memreports(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
+    memreports = archive_memreports(run_dir, saved, launch_epoch - 5, time.time() + 5)
     if memreports:
         print("[capture] memreport archived: %s" % ", ".join(m["name"] for m in memreports))
     elif (snapshot.get("exec_at") or {}).get("command", "").startswith("memreport"):
         print("[capture] WARNING: memreport 命令已调度但没有找到 .memreport 文件（看 %s）"
               % project_memreport_dir(snapshot["uproject"]))
-    copied = archive_csv(run_dir, snapshot["uproject"], launch_epoch - 5, time.time() + 5)
+    copied = archive_csv(run_dir, saved, launch_epoch - 5, time.time() + 5)
     if copied:
         print("[capture] csv profiler archived: %s" % ", ".join(copied))
     elif snapshot.get("csv"):
@@ -274,9 +275,12 @@ def main(argv=None) -> int:
     ap.add_argument("--map", default=None, help="覆盖 profile 的地图")
     ap.add_argument("--uproject", default=None, help="宿主工程（默认 host/TraceDigestProbe）")
     ap.add_argument("--ue-root", default=None, help="UE 根目录（默认读 UE_ROOT）")
+    ap.add_argument("--exe", default=None,
+                    help="打包后的游戏可执行文件（如 <Pkg>/Windows/<Game>.exe）→ 走 packaged 模式："
+                         "不传 uproject、不加 -game，Saved 按 <exe dir>/Saved 收文件")
     a = ap.parse_args(argv)
     try:
-        return capture(a.profile, a.run_dir, a.uproject, a.ue_root, a.map)
+        return capture(a.profile, a.run_dir, a.uproject, a.ue_root, a.map, game_exe=a.exe)
     except ValueError as e:
         print("[error] %s" % e)
         return 1
