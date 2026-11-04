@@ -29,38 +29,171 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 DEFAULT_VIEWS = ("cpu", "bound")
 
 
-def candidate_dirs(project=None, extra=None):
-    """搜索目录：<Project>/Saved/Profiling、其子目录（MemReports 那套结构不用），外加 --dir。"""
+def unreal_trace_root():
+    """UnrealTrace 的公共根（store、settings、server 日志都在这里）。
+
+    Windows: %LOCALAPPDATA%/UnrealEngine/Common/UnrealTrace
+    其它平台按 UE 的约定退化到 ~/UnrealTrace（Gauntlet 源码里同样是这两套）。
+    """
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        return os.path.join(local, "UnrealEngine", "Common", "UnrealTrace")
+    return os.path.join(os.path.expanduser("~"), "UnrealTrace")
+
+
+def store_dir_from_settings(root=None):
+    """从 trace server 的 Settings.ini 读它实际用的 store 目录（**权威来源**）。
+
+    服务端日志里能看到它就是从这里读的：
+        Reading settings from '<root>/Settings.ini'
+         - Directory: '<root>/Store/001'
+    文件不存在（默认情况）就返回 None。
+    """
+    root = root or unreal_trace_root()
+    path = os.path.join(root, "Settings.ini")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with io.open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        if key.strip().lower() in ("directory", "storedirectory", "store"):
+            value = value.strip().strip('"')
+            if value:
+                return value if os.path.isabs(value) else os.path.join(root, value)
+    return None
+
+
+def store_dir_from_server_log(root=None):
+    """从最新的 Server_*.log 读服务端**实际**使用的目录（比 Settings.ini 更实时）。
+
+    日志行：` - Directory: 'C:/Users/.../UnrealTrace/Store/001'`
+    """
+    root = root or unreal_trace_root()
+    if not os.path.isdir(root):
+        return None
+    logs = [os.path.join(root, n) for n in os.listdir(root)
+            if n.lower().startswith("server_") and n.lower().endswith(".log")]
+    if not logs:
+        return None
+    logs.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    pattern = re.compile(r"Directory:\s*'([^']+)'")
+    for path in logs[:5]:
+        try:
+            with io.open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        found = pattern.findall(text)
+        if found:
+            return found[-1]
+    return None
+
+
+def trace_store_dirs():
+    """store 搜索目录，按可信度排序：
+
+    1. Settings.ini 里配的 Directory（权威配置）；
+    2. 最新 Server_*.log 里打印的实际目录（最实时）；
+    3. `<root>/Store` 及其每个 `<编号>` 子目录（默认布局，逐层枚举）；
+    4. 环境变量 UE_TRACE_STORE（给非常规部署/CI 用）。
+    """
+    root = unreal_trace_root()
+    dirs = []
+    for candidate in (store_dir_from_settings(root), store_dir_from_server_log(root)):
+        if candidate and os.path.isdir(candidate):
+            dirs.append(candidate)
+    default_store = os.path.join(root, "Store")
+    if os.path.isdir(default_store):
+        dirs.append(default_store)
+        for name in sorted(os.listdir(default_store)):
+            path = os.path.join(default_store, name)
+            if os.path.isdir(path):
+                dirs.append(path)
+    if os.environ.get("UE_TRACE_STORE"):
+        extra = os.environ["UE_TRACE_STORE"]
+        if os.path.isdir(extra):
+            dirs.append(extra)
+    # 去重保序
+    seen, out = set(), []
+    for d in dirs:
+        key = os.path.normcase(os.path.abspath(d))
+        if key not in seen:
+            seen.add(key)
+            out.append(d)
+    return out
+
+
+def candidate_dirs(project=None, extra=None, include_store=True):
+    """搜索目录：<Project>/Saved/Profiling + UnrealTrace store（按配置解析）+ --dir。"""
     dirs = []
     if project:
         project = os.path.abspath(project)
-        saved = os.path.join(project, "Saved") if os.path.isdir(os.path.join(project, "Saved")) \
-            else os.path.join(os.path.dirname(project), "Saved")
+        saved = os.path.join(project, "Saved") if os.path.isdir(os.path.join(project, "Saved"))             else os.path.join(os.path.dirname(project), "Saved")
         dirs.append(os.path.join(saved, "Profiling"))
+    if include_store:
+        dirs += trace_store_dirs()
     for d in extra or []:
         dirs.append(os.path.abspath(d))
     return [d for d in dirs if os.path.isdir(d)]
 
 
-def find_latest(dirs, min_age_s=10.0, now=None):
-    """返回 (path, mtime) 或 (None, None)。按 mtime 倒序，跳过"刚写过、可能还在录"的文件。"""
-    now = time.time() if now is None else now
-    best = (None, None)
+def _all_traces(dirs):
+    out = []
     for root in dirs:
         for dirpath, _dirnames, filenames in os.walk(root):
             for name in filenames:
-                if not name.lower().endswith(".utrace"):
-                    continue
-                path = os.path.join(dirpath, name)
-                try:
-                    mtime = os.path.getmtime(path)
-                except OSError:
-                    continue
-                if now - mtime < min_age_s:
-                    continue          # 可能还在写
-                if best[1] is None or mtime > best[1]:
-                    best = (path, mtime)
-    return best
+                if name.lower().endswith(".utrace"):
+                    out.append(os.path.join(dirpath, name))
+    return out
+
+
+def _pick_stable(paths, min_age_s, now, check_stable, settle_s):
+    ranked = []
+    for path in paths:
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if now - mtime < min_age_s:
+            continue
+        ranked.append((path, mtime))
+    ranked.sort(key=lambda kv: -kv[1])
+    for path, mtime in ranked:
+        if not check_stable:
+            return path, mtime
+        try:
+            size_before = os.path.getsize(path)
+            time.sleep(settle_s)
+            if os.path.getsize(path) == size_before:
+                return path, mtime
+        except OSError:
+            continue
+    return (None, None)
+
+
+def find_latest(dirs, min_age_s=10.0, now=None, check_stable=True, settle_s=0.4):
+    """返回 (path, mtime) 或 (None, None)。
+
+    两个"还在录"的判据：
+      - mtime 距现在短于 min_age_s（默认 10s）；
+      - check_stable：隔 settle_s 再 stat 一次，大小变了就跳过（store 里的活动文件持续增长）。
+    最新那条还在增长时，退到"次新且稳定"的候选。
+    """
+    now = time.time() if now is None else now
+    traces = _all_traces(dirs)
+    if not traces:
+        return (None, None)
+    path, mtime = _pick_stable(traces, min_age_s, now, check_stable, settle_s)
+    if path is None and check_stable:
+        # 全都不稳定（例如刚录完、server 还在写尾巴）：放宽"稳定性"再来一次
+        path, mtime = _pick_stable(traces, min_age_s, now, False, settle_s)
+    return (path, mtime)
 
 
 def guess_project(project):
@@ -143,6 +276,89 @@ def run_views(run_dir, views, out_root, b2=False, ue_root=None, target_fps=None)
     return results
 
 
+def trace_duration_s(trace, out_dir):
+    """用 B2 的 frames 摘要拿 trace 时长（没有帧也能拿到 duration_ms）。失败返回 None。"""
+    from pipeline.extract import b2
+    cache = os.path.join(out_dir, "b2_frames.json")
+    ok, _text = b2.run_mode("frames", trace, cache, limit=1)
+    if not ok or not os.path.isfile(cache):
+        return None
+    try:
+        with io.open(cache, encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return None
+    ms = payload.get("duration_ms")
+    return (ms / 1000.0) if ms else None
+
+
+def no_frame_fallback(run_dir, out_root, ue_root=None,
+                      threads=("GameThread", "RenderThread 0")):
+    """没有帧数据时的回退：整段 CPU 聚合（b2 timerstats）。
+
+    什么时候会发生：录的是**没有 PIE / 没有游戏的编辑器会话** —— Frame 通道开着但 0 个帧事件。
+    这时帧级口径（digest cpu / bound）无从谈起，但"这段时间 CPU 花在哪"仍然可答。
+
+    注意：B2 的 window 必须落在 trace 内部，越过末尾会让未闭合 scope 变成 inf（R13）；
+    所以这里先取 duration，再留 5 秒余量。
+    """
+    from pipeline.extract import b2
+    trace = os.path.join(run_dir, "trace.utrace")
+    if not os.path.isfile(trace):
+        return None
+    duration = trace_duration_s(trace, out_root)
+    if not duration:
+        return None
+    end = max(1.0, duration - 5.0)
+    result = {"duration_s": round(duration, 3), "window": [0.0, round(end, 3)], "threads": {}}
+    for thread in threads:
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", thread)
+        cache = os.path.join(out_root, "b2_timerstats_%s.json" % safe)
+        ok, _text = b2.run_mode("timerstats", trace, cache, limit=25, start=0.0, end=end, thread=thread)
+        if not ok or not os.path.isfile(cache):
+            continue
+        try:
+            with io.open(cache, encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, ValueError):
+            continue
+        rows = [{"name": t.get("name"), "calls": t.get("calls"), "self_s": t.get("self_s"),
+                 "pct": t.get("self_pct_window")} for t in (payload.get("timers") or [])[:12]]
+        total = ((payload.get("totals") or {}).get("sum_self_s")) or 0.0
+        result["threads"][thread] = {"sum_self_s": round(total, 3),
+                                     "busy_pct": round(100.0 * total / end, 2) if end else None,
+                                     "rows": rows}
+    return result
+
+
+def render_no_frame(section):
+    lines = ["## 没有帧数据（多半是还没 PIE）", "",
+             "trace 时长 %.1f s，`Frame`/`Cpu` 通道开着但**没有任何帧事件** —— "
+             "帧级口径（cpu / bound）无从谈起。下面按整段 CPU 聚合，回答「这段时间 CPU 花在哪」。" %
+             section["duration_s"], ""]
+    for thread, info in section["threads"].items():
+        lines += ["### %s" % thread, "",
+                  "| timer | calls | self (s) | 占窗口 |", "|---|---|---|---|"]
+        for row in info["rows"]:
+            lines.append("| %s | %s | %.3f | %.1f%% |"
+                         % (str(row["name"])[:52], row["calls"], row["self_s"] or 0.0, row["pct"] or 0.0))
+        lines += ["", "该线程 self 合计 %.1f s（占窗口 %.1f%%）。" % (info["sum_self_s"], info["busy_pct"] or 0.0), ""]
+    lines += ["> 想要帧级结论：**先开 PIE 再录**（Insights 录的是编辑器进程，PIE 的帧才会进 Frame 轨道）。", ""]
+    return "\n".join(lines)
+
+
+def _has_stats_window(run_dir):
+    path = os.path.join(run_dir, "manifest.json")
+    if not os.path.isfile(path):
+        return True          # 没有 manifest：交给视图自己报错，不在这里猜
+    try:
+        with io.open(path, encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, ValueError):
+        return True
+    return bool((manifest.get("window_basis") or {}).get("stats_window"))
+
+
 def build_summary(run_dir, trace, log, views_result, capture_note=None):
     lines = ["# 自动分析：最新 utrace", "",
              "| 项 | 值 |", "|---|---|",
@@ -179,6 +395,8 @@ def main(argv=None) -> int:
     ap.add_argument("--target-fps", type=float, default=None)
     ap.add_argument("--ue-root", default=None)
     ap.add_argument("--json", action="store_true", help="输出一行结构化结果（给 agent）")
+    ap.add_argument("--explain", action="store_true",
+                    help="打印搜索来源（UnrealTrace 根、Settings.ini、server 日志、实际选中的文件）")
     a = ap.parse_args(argv)
 
     views = [v.strip() for v in a.views.split(",") if v.strip()]
@@ -187,6 +405,14 @@ def main(argv=None) -> int:
     if bad:
         print("[error] 未知视图：%s（可用：%s）" % (", ".join(bad), ", ".join(sorted(valid))))
         return 2
+
+    if a.explain:
+        root = unreal_trace_root()
+        print("[explain] UnrealTrace 根      : %s" % root)
+        print("[explain] Settings.ini 目录   : %s" % (store_dir_from_settings(root) or "（未配置，用默认）"))
+        print("[explain] server 日志目录     : %s" % (store_dir_from_server_log(root) or "（无日志）"))
+        for d in candidate_dirs(a.project, a.dir):
+            print("[explain] 搜索：%s" % d)
 
     project_dir = guess_project(a.project)
     if a.trace:
@@ -225,6 +451,15 @@ def main(argv=None) -> int:
     os.makedirs(out_root, exist_ok=True)
     views_result = run_views(run_dir, views, out_root, a.b2, a.ue_root, a.target_fps)
     summary = build_summary(run_dir, trace, log, views_result)
+    # 没有统计窗口（典型原因：录的是没 PIE 的编辑器会话 —— Frame 通道开着但 0 个帧事件）
+    # → 走整段 CPU 回退，至少回答"这段时间 CPU 花在哪"
+    if not _has_stats_window(run_dir):
+        fallback = no_frame_fallback(run_dir, out_root, a.ue_root)
+        if fallback:
+            summary += "\n" + render_no_frame(fallback)
+            print("[auto] 没有帧数据 → 已按整段 CPU 聚合（trace 时长 %.1fs）" % fallback["duration_s"])
+        else:
+            print("[auto] 没有帧数据，且整段 CPU 聚合也失败（见 auto/b2_timerstats*.log）")
     summary_path = os.path.join(out_root, "summary.md")
     with io.open(summary_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(summary + "\n")

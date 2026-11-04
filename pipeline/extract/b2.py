@@ -16,6 +16,8 @@ frames_seen / trace.timer_count 对账——这是 B2 与 A 路（Insights 导�
 import argparse
 import io
 import json
+
+from pipeline.extract import metric_json
 import os
 import subprocess
 import sys
@@ -226,7 +228,7 @@ def main(argv=None) -> int:
         return 1
 
     with io.open(out_path, encoding="utf-8") as f:
-        payload = json.load(f)
+        payload = metric_json.loads(f.read())
 
     if a.mode == "frames":
         summary = summarize_frames(payload, a.limit)
