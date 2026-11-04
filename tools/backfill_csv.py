@@ -16,7 +16,7 @@ sys.path.insert(0, REPO)
 
 from pipeline.capture import capture as C  # noqa: E402
 
-UPROJECT = "C:/UEProject/LyraStarterGame/LyraStarterGame.uproject"
+UPROJECT = os.environ.get("UE_UPROJECT", "")   # 例：C:/path/to/Game.uproject
 MAPPING = {
     "runs/m3_4L2/A5": "Profile(20261103_211239).csv",
     "runs/m3_4L2/B5": "Profile(20261103_211415).csv",

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_text.py - enforce the repo text-encoding policy (docs/PLAN.md section 7.4, rules E1-E8).
+"""check_text.py - enforce the repo text-encoding policy (rules E1–E8).
 
 Checks every text file (default: tracked + untracked-but-not-ignored files):
   E1  must decode as UTF-8; no UTF-8 BOM; no U+FFFD replacement characters;

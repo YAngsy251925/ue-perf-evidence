@@ -11,7 +11,6 @@ on:
     paths:
       - "pipeline/**"
       - "harness/**"
-      - "docs/PLAN.md"
   workflow_dispatch:
     inputs:
       fail_on:

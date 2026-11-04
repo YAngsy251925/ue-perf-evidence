@@ -13,7 +13,7 @@ import unittest
 from pipeline.extract import hitch_log
 from pipeline.digest.views import hitch as hitch_view
 
-LAB = r"D:\dsh-output\ue5-perf-lab"
+LAB = os.environ.get("UE_PERF_LAB", "")
 C_LOG = os.path.join(LAB, "coexist_C.log")
 C_SNAPSHOT = os.path.join(LAB, "TraceDigestProbe", "Saved", "Profiling", "Hitches",
                           "24DFBA3D4B23A4FE78B998A79E0E8FCC", "Frame-3.utrace")

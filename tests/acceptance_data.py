@@ -8,7 +8,7 @@ import os
 
 from pipeline.caliber.manifest import build_manifest
 
-LAB = r"D:\dsh-output\ue5-perf-lab"
+LAB = os.environ.get("PERF_ACCEPTANCE_LAB", "")  # 本机历史实验数据目录；不设则相关验收测试自动跳过
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 B2_RUN = os.path.join(REPO, "runs", "m1_1", "B2_smoke_bridge")
 

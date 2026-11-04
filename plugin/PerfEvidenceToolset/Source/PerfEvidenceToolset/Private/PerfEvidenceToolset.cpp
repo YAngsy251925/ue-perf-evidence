@@ -32,7 +32,7 @@ FString UPerfEvidenceToolset::PerfStopCapture()
 
 FString UPerfEvidenceToolset::PerfRunReport(const FString& RunDir, const FString& QuestionType)
 {
-	const FString Repo = TEXT("D:/dsh-output/ue-perf-evidence");
+	const FString Repo = FPlatformMisc::GetEnvironmentVariable(TEXT("PERF_EVIDENCE_REPO"));
 	const FString Script = Repo / TEXT("perfctl.py");
 	const FString OutDir = RunDir / (TEXT("digest_") + QuestionType);
 	const FString Kind = (QuestionType == TEXT("hitch")) ? TEXT("hitch") : TEXT("cpu");
@@ -55,7 +55,7 @@ FString UPerfEvidenceToolset::PerfRunReport(const FString& RunDir, const FString
 FString UPerfEvidenceToolset::PerfEvidenceLines(const FString& RunDir, const FString& Ref,
 	int32 Page, int32 Limit)
 {
-	const FString Repo = TEXT("D:/dsh-output/ue-perf-evidence");
+	const FString Repo = FPlatformMisc::GetEnvironmentVariable(TEXT("PERF_EVIDENCE_REPO"));
 	const FString Script = Repo / TEXT("perfctl.py");
 	const FString OutDir = RunDir / TEXT("evidence_out");
 	const int32 UsePage = Page > 0 ? Page : 1;
@@ -92,7 +92,7 @@ FString UPerfEvidenceToolset::PerfEvidenceLines(const FString& RunDir, const FSt
 FString UPerfEvidenceToolset::PerfAnalyzeLatest(const FString& ProjectPath, const FString& Views,
 	bool bWithB2)
 {
-	const FString Repo = TEXT("D:/dsh-output/ue-perf-evidence");
+	const FString Repo = FPlatformMisc::GetEnvironmentVariable(TEXT("PERF_EVIDENCE_REPO"));
 	const FString Script = Repo / TEXT("perfctl.py");
 	const FString UseViews = Views.IsEmpty() ? TEXT("cpu,bound") : Views;
 	FString Args = FString::Printf(TEXT("-X utf8 \"%s\" auto --project \"%s\" --views \"%s\""),

@@ -30,6 +30,6 @@ python -X utf8 -m tests.make_golden
 
 ## 前提
 
-本机存在 `tests/acceptance_data.py` 指向的实验目录数据（`D:\dsh-output\ue5-perf-lab` 与
+本机存在 `tests/acceptance_data.py` 指向的实验目录数据（`tests/acceptance_data.py` 里 `LAB` 指向的实验目录，以及
 `runs/m1_1`）；缺失时相关测试自动跳过。trace 本体不进 git（体积原因），路径见
 `tests/acceptance_data.py`。

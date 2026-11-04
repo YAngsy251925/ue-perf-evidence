@@ -22,3 +22,8 @@ runs/
 # python
 __pycache__/
 *.pyc
+# 内部文档：只在本机保留，不进公开仓库
+docs/PLAN.md
+docs/HANDOFF.md
+CHANGELOG.md
+advice/ledger.json

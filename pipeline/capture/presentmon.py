@@ -25,7 +25,7 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_EXE = r"D:\dsh-output\tools\presentmon\2.6.0\PresentMon-2.6.0-x64.exe"
+DEFAULT_EXE = os.environ.get("PRESENTMON_EXE", "tools/presentmon/PresentMon-x64.exe")
 
 V2_FIELDS = ["Application", "ProcessID", "SwapChainAddress", "PresentRuntime", "SyncInterval",
              "PresentFlags", "AllowsTearing", "PresentMode", "TimeInMs", "MsBetweenSimulationStart",

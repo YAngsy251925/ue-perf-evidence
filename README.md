@@ -3,10 +3,7 @@
 UE 5.8 上、面向 AI agent 的**性能证据管线**：从一次采集（trace + 日志 + CSV + PresentMon + MemReport + 采样器）
 推出一句可复核的结论，并能把结论逐行下钻回原始证据。
 
-> 规格唯一权威：[docs/PLAN.md](docs/PLAN.md)（含 R1–R15 口径规则、P1–P21 协议、M0.5–M6 里程碑）
-> 交接：[docs/HANDOFF.md](docs/HANDOFF.md) ｜ 变更：[CHANGELOG.md](CHANGELOG.md)
-
-**状态**：M0.5–M6 全部完成（2026-11-05，`v0.7.0`），304 单测 + 口径 golden 回归全绿。
+**状态**：`v0.8.0`（2026-11-05），346 单测 + 口径 golden 回归全绿。
 
 ## 它回答什么问题
 
@@ -62,7 +59,7 @@ agent 侧对应工具（编辑器里的 AI Assistant / MCP）：`PerfAnalyzeLate
 录完 trace 什么都不用打开，直接：
 
 ```bash
-python perfctl.py auto --project C:/UEProject/LyraStarterGame      # 找最新 .utrace → ingest → cpu+bound → 摘要
+python perfctl.py auto --project <YourProject>      # 找最新 .utrace → ingest → cpu+bound → 摘要
 python perfctl.py auto --project … --views cpu,bound,gpu,config --b2   # 多跑几个视图（--b2 才有 GPU 线）
 ```
 
@@ -75,7 +72,7 @@ python perfctl.py auto --project … --views cpu,bound,gpu,config --b2   # 多�
 
 ## 快速开始
 
-采集有三条通路，任选一条（详见 [docs/PLAN.md](docs/PLAN.md) §3）：
+采集有三条通路，任选一条：
 
 ```bash
 # ① 编辑器里 PIE / Insights 已经录好了 → 只要一份 .utrace（+日志）就能进管线
@@ -85,7 +82,7 @@ python perfctl.py ingest --trace "<Project>/Saved/Profiling/xxx.utrace"        -
 python perfctl.py capture harness/profiles/measure.json runs/pkg1        --exe "<Pkg>/Windows/<Game>.exe"
 
 # ③ 编辑器二进制 -game（最可复现的基线，自带 CSV/采样器全集；会弹 960×540 窗口）
-python perfctl.py capture harness/profiles/measure.json runs/r1 --uproject <path>.uproject
+python perfctl.py capture harness/profiles/measure.json runs/r1 --uproject <YourProject>.uproject
 
 # 1) 口径与能力（必须先跑，后面的视图都读它）
 python perfctl.py manifest runs/r1

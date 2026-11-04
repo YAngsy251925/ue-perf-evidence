@@ -7,7 +7,7 @@ import time
 import unreal
 
 TOOLSET = "PerfEvidenceToolset.PerfEvidenceToolset"
-TRACE = "D:/dsh-output/ue-perf-evidence/runs/m3_1/tool_capture.utrace"
+TRACE = os.environ.get("PERF_TRACE", "runs/m3_1/tool_capture.utrace")
 
 
 def wait_value(result, label):

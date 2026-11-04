@@ -247,7 +247,7 @@ class V0RegressionTest(unittest.TestCase):
     """v0 数字核心保持逐字节不变（M1.1 回归基线）。"""
 
     def test_v0_outputs_unchanged(self):
-        lab = os.environ.get("UE_PERF_LAB", r"D:\dsh-output\ue5-perf-lab")
+        lab = os.environ.get("UE_PERF_LAB", "")
         src = os.path.join(lab, "out3", "stats_GameThread.csv")
         if not os.path.isfile(src):
             self.skipTest("lab baseline missing")
