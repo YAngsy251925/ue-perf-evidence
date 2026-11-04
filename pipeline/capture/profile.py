@@ -277,7 +277,8 @@ def build_args(profile: dict, run_dir: str, uproject: str, map_override=None) ->
                  "-ExitAfterCsvProfiling"]
     at = exec_at_config(profile)
     if at:
-        args.append("PerfEvidence.ExecAt=%g:%s" % (at["at_s"], at["command"]))
+        # 命令里可能有空格（如 "open /Game/Maps/X"）：必须整体加引号，否则引擎只拿到第一个 token
+        args.append('PerfEvidence.ExecAt="%g:%s"' % (at["at_s"], at["command"]))
     cmds = exec_commands(profile)
     if cmds:
         args.append('-ExecCmds="%s"' % ",".join(cmds))
