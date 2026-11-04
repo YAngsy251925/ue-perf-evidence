@@ -371,12 +371,52 @@ def prepare_rows(run_dir, manifest, trace, thread="GameThread", ue_root=None, ex
         argv += ["--top", str(export_top)]
     if gpu_csv_name:
         argv += ["--optional", gpu_csv_name]
-    if insights_export.main(argv) != 0:
-        sys.exit("[error] windowed export failed (see insights log under %s)" % outdir)
+    export_rc = insights_export.main(argv)
+    if export_rc != 0 or not os.path.isfile(source_csv):
+        # A 路导出失败（实测：458MB 编辑器 trace 上 Insights 分析了 30M scopes 但没执行导出命令）
+        # → 不中断流程，改用 B2 直接读 trace（不需要 CSV）。口径不同，写进 warnings。
+        fallback = b2_rows(trace, window, thread, ue_root=ue_root)
+        if fallback is None:
+            print("[warn] windowed export failed (see insights log under %s); B2 fallback also failed" % outdir)
+            sys.exit("[error] windowed export failed (see insights log under %s)" % outdir)
+        rows_b2, extra_warnings = fallback
+        warnings += ["A 路窗口导出失败 → 改用 B2（trace 直读，口径不同：B2 的 self 来自深度栈、条数为 top %d）"
+                     % export_top]
+        warnings += extra_warnings
+        cal = caliber_from_manifest(manifest, "b2:%s" % thread)
+        cal["source"] = "b2_timerstats"
+        cal["gpu_rows_purged"] = 0
+        return "ok", merge_by_name(rows_b2), cal, warnings
     with open(stamp_path, "w", encoding="utf-8") as f:
         f.write(stamp)
     rows_raw, caliber = load_purged()
     return "ok", merge_by_name(rows_raw), caliber, warnings
+
+
+def b2_rows(trace, window, thread, ue_root=None, top=200):
+    """用 B2 的 timerstats 直接产出行（不需要 Insights 导出 CSV）。
+
+    返回 (rows, warnings) 或 None。行结构与 cpu.load_rows 一致：name/count/excl/incl/emax/eavg。
+    """
+    from pipeline.extract import b2, metric_json
+    out = os.path.join(os.path.dirname(os.path.abspath(trace)), "b2", "b2_timerstats_%s.json"
+                       % thread.replace(" ", "_"))
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    ok, text = b2.run_mode("timerstats", trace, out, limit=top, start=window[0], end=window[1],
+                           thread=thread, ue_root=ue_root)
+    if not ok or not os.path.isfile(out):
+        return None
+    payload = metric_json.load_path(out)
+    rows = []
+    for t in payload.get("timers") or []:
+        self_s = t.get("self_s") or 0.0
+        incl = t.get("inclusive_s") or 0.0
+        calls = t.get("calls") or 0
+        rows.append({"name": t.get("name"), "count": calls, "excl": self_s, "incl": incl,
+                     "emax": self_s, "eavg": (self_s / calls) if calls else 0.0})
+    if not rows:
+        return None
+    return rows, []
 
 
 def build_run_digest(run_dir, manifest, trace, thread="GameThread", ue_root=None, with_b2=False):

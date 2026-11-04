@@ -262,3 +262,59 @@ class V0RegressionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExportFallbackTest(unittest.TestCase):
+    """A 路窗口导出失败时，digest 不应中断，而应改走 B2 直读（不需要 CSV）。"""
+
+    def manifest(self):
+        # caliber_from_manifest 需要 engine / trace / caliber 这几个块
+        return {"measurable": True, "warnings": [],
+                "run_id": "fixture",
+                "window_basis": {"stats_window": "stats", "reference": "Game"},
+                "windows": {"stats": [1.0, 2.0]},
+                "engine": {"build_config": "Development", "rhi": "D3D12"},
+                "caliber": {"warmup_frames": 60, "bridge": {"statnamedevents_effective": True}},
+                "frame_semantics": {"game": {"window_frames": 100},
+                                    "render": {"window_frames": 100}},
+                "trace": {"file": "trace.utrace", "channels_requested": ["cpu", "frame", "gpu"],
+                          "timer_count": 100}}
+
+    def test_falls_back_to_b2_when_export_fails(self):
+        from pipeline.digest import run_digest
+        from pipeline.extract import insights_export
+
+        canned = [{"name": "PerfEvidenceRegress", "count": 10, "excl": 2.0, "incl": 2.0,
+                   "emax": 0.25, "eavg": 0.2}]
+        old_main = insights_export.main
+        old_rows = run_digest.b2_rows
+        insights_export.main = lambda argv: 1          # 模拟导出失败
+        run_digest.b2_rows = lambda trace, window, thread, ue_root=None, top=200: (canned, [])
+        try:
+            import tempfile
+            with tempfile.TemporaryDirectory() as d:
+                status, rows, cal, warnings = run_digest.prepare_rows(
+                    d, self.manifest(), "trace.utrace", "GameThread")
+        finally:
+            insights_export.main = old_main
+            run_digest.b2_rows = old_rows
+        self.assertEqual(status, "ok")
+        self.assertEqual(rows[0]["name"], "PerfEvidenceRegress")
+        self.assertEqual(cal["source"], "b2_timerstats")
+        self.assertTrue(any("B2" in w for w in warnings))
+
+    def test_both_routes_failing_is_fatal(self):
+        from pipeline.digest import run_digest
+        from pipeline.extract import insights_export
+        old_main = insights_export.main
+        old_rows = run_digest.b2_rows
+        insights_export.main = lambda argv: 1
+        run_digest.b2_rows = lambda *a, **k: None
+        try:
+            import tempfile
+            with tempfile.TemporaryDirectory() as d:
+                with self.assertRaises(SystemExit):
+                    run_digest.prepare_rows(d, self.manifest(), "trace.utrace", "GameThread")
+        finally:
+            insights_export.main = old_main
+            run_digest.b2_rows = old_rows
