@@ -82,6 +82,82 @@ private:
 
 // ---------------------------------------------------------------- CSV 事件对
 
+// PerfEvidence.ExecAt=<秒>:<命令> —— 到点把命令排进 GEngine->DeferredCommands（与 -ExecCmds 同路径）。
+// 宿主模块 TraceDigestProbe 里一直有；插件这边是 M6.3 才发现缺的（Lyra 的 open 命令因此静默没执行）。
+// 从命令行取 PerfEvidence.ExecAt 的值。
+// 坑：引擎会把带空格的 token 整体重新加引号 —— 命令行里看到的是
+//   "PerfEvidence.ExecAt=12:stat none"（引号在键前、闭合引号在整段末尾），
+// 所以不能靠 FParse::Value（它只认"键前是空白"），也不能简单剥引号（值会在空格处截断）。
+// 这里直接定位键，再按"是否被引号包裹"决定读到哪个字符。
+static bool PerfEvidenceReadExecAt(FString& OutValue)
+{
+	const FString Line = FCommandLine::Get();
+	const FString Key = TEXT("PerfEvidence.ExecAt=");
+	const int32 KeyAt = Line.Find(Key, ESearchCase::IgnoreCase, ESearchDir::FromStart);
+	if (KeyAt == INDEX_NONE)
+	{
+		return false;
+	}
+	int32 Start = KeyAt + Key.Len();
+	if (Start >= Line.Len())
+	{
+		return false;
+	}
+	if (Line[Start] == TEXT('"'))
+	{
+		const int32 End = Line.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, Start + 1);
+		if (End == INDEX_NONE) { return false; }
+		OutValue = Line.Mid(Start + 1, End - Start - 1);
+		return true;
+	}
+	if (KeyAt > 0 && Line[KeyAt - 1] == TEXT('"'))
+	{
+		const int32 End = Line.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, Start);
+		if (End == INDEX_NONE)
+		{
+			OutValue = Line.Mid(Start);
+			return true;
+		}
+		OutValue = Line.Mid(Start, End - Start);
+		return true;
+	}
+	int32 End = Start;
+	while (End < Line.Len() && !FChar::IsWhitespace(Line[End])) { ++End; }
+	OutValue = Line.Mid(Start, End - Start);
+	return true;
+}
+
+static void PerfEvidenceScheduleExecAt()
+{
+	FString ExecAt;
+	if (!PerfEvidenceReadExecAt(ExecAt))
+	{
+		return;
+	}
+	int32 Sep = INDEX_NONE;
+	if (!ExecAt.FindChar(TEXT(':'), Sep))
+	{
+		return;
+	}
+	const double DelaySeconds = FCString::Atod(*ExecAt.Left(Sep));
+	const FString Command = ExecAt.Mid(Sep + 1).TrimStartAndEnd();
+	if (DelaySeconds <= 0.0 || Command.IsEmpty())
+	{
+		return;
+	}
+	FTSTicker::GetCoreTicker().AddTicker(TEXT("PerfEvidenceExecAt"), float(DelaySeconds),
+		[Command](float)
+		{
+			UE_LOGF(LogTemp, Display, "PerfEvidence: queueing exec [%ls]", *Command);
+			if (GEngine)
+			{
+				GEngine->DeferredCommands.Add(Command);
+			}
+			return false; // one-shot
+		});
+	UE_LOGF(LogTemp, Display, "PerfEvidence: ExecAt scheduled at %.1fs [%ls]", DelaySeconds, *Command);
+}
+
 #if CSV_PROFILER
 static void PerfEvidenceMakeEventTicker(double DelaySeconds, const TCHAR* EventText)
 {
@@ -100,6 +176,7 @@ static struct FPerfEvidenceHostInit
 	FPerfEvidenceHostInit()
 	{
 		// 引擎起来之后再建 tickable：静态初始化阶段只挂一次性 ticker（P17）。
+		PerfEvidenceScheduleExecAt();
 		FTSTicker::GetCoreTicker().AddTicker(TEXT("PerfEvidenceBusyBoot"), 0.0f,
 			[](float)
 			{

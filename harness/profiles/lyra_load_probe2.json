@@ -1,0 +1,62 @@
+{
+  "schema": "perf-profile/0",
+  "name": "lyra_load_probe2",
+  "class": "measure",
+  "description": "M6.3 活体验证（第三版）：Lyra 前端，15s 后 open（默认地图 L_Expanse，实测 12s 加载），通道加 assetloadtime——5.8 里 AssetLoadTime 是独立通道，可能就是新加载分析模块的数据源",
+  "map": "/Game/System/FrontEnd/Maps/L_LyraFrontEnd",
+  "rhi": "default",
+  "window": {
+    "windowed": true,
+    "resx": 960,
+    "resy": 540
+  },
+  "flags": [
+    "-unattended",
+    "-nosplash",
+    "-nosound"
+  ],
+  "statnamedevents": true,
+  "trace": {
+    "channels": [
+      "cpu",
+      "frame",
+      "gpu",
+      "bookmark",
+      "loadtime",
+      "assetloadtime"
+    ],
+    "tail_mb": 64,
+    "tail_mb_provisional": true
+  },
+  "cvars": {
+    "t.MaxFPS": "0",
+    "r.VSync": "0",
+    "r.GTSyncType": "0",
+    "t.IdleWhenNotForeground": "0"
+  },
+  "set_res_cvar": true,
+  "exec_cmds": [
+    "PerfEvidence.BusyCount 10",
+    "PerfEvidence.BusyMs 2"
+  ],
+  "csv": {
+    "coverage_start_s": 45,
+    "stop_at_s": 60,
+    "exit": "exit_after_csv"
+  },
+  "conditions": {
+    "warmup_frames": 60,
+    "duration_s": 40,
+    "camera": "static",
+    "frame_generation": "off"
+  },
+  "stop": {
+    "mode": "clean_exit",
+    "startup_budget_s": 300,
+    "exit_budget_s": 30
+  },
+  "exec_at": {
+    "at_s": 15,
+    "command": "open /Game/System/TransitionMap"
+  }
+}
