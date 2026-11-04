@@ -65,6 +65,9 @@ python perfctl.py diff cpu <run_a> <run_b> --out <dir> [--trace-a FILE] [--trace
 python perfctl.py diff cpu -a R1 R2 R3 R4 R5 -b S1 S2 S3 S4 S5 --out <dir>    # 组形态（M3.3）
 python perfctl.py diff cpu -a ... -b ... --out <dir> --significance-only       # 只读 manifest 的 p50，CI 门槛
 
+# 配置快照（M5.5）：cvar（ExecCmds + LogConfig 两个源）与 scalability 档位，对账 profile 声明
+python perfctl.py digest config runs/<id> --out runs/<id>/config
+
 # 单帧 scope 树（M5.4）：B2 读第 N 帧的整棵树 + 自耗时 + 名字覆盖率
 python perfctl.py digest single_frame runs/<id> --frame 700 --out runs/<id>/frame700 --b2
 
