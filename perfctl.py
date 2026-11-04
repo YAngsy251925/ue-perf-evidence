@@ -22,6 +22,7 @@
   python perfctl.py profile list | show <name> | prepare <name> <run_dir> [--map M]       # 采集 profile（M2.1）
   python perfctl.py capture <profile> <run_dir> [--map M] [--exe Game.exe]                  # 一条命令采集（M2.2）
   python perfctl.py ingest --trace F --run DIR [--log F] [--mode pie|packaged|external]     # 外部采集（PIE/打包包）接进管线
+  python perfctl.py auto [--project P] [--views cpu,bound] [--b2] [--json]                  # 自动分析**最新**的 utrace（M8.2）
   python perfctl.py session-drift [--segments 6] [--duration 20]                            # M3.0 常驻会话实测
   python perfctl.py runs          [--root DIR] [--filter S] [--limit N] [--json]            # M3.2 run 列表（perf_runs）
   python perfctl.py b2 frames|timers <trace> --out DIR [--limit N]                          # M4.2 B2 深度读取
@@ -32,7 +33,7 @@ UE 根目录：--ue-root 或环境变量 UE_ROOT。
 import os
 import sys
 
-from pipeline.capture import capture, ingest, profile, session
+from pipeline.capture import auto, capture, ingest, profile, session
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
 from pipeline.digest.views import (allocations, bound, config, cpu, crosscheck, evidence, gpu, hitch,
@@ -53,6 +54,8 @@ def main(argv=None) -> int:
         return insights_export.main(rest)
     if group == "ingest":
         return ingest.main(rest)
+    if group == "auto":
+        return auto.main(rest)
     if group == "evidence":       # perf_evidence 的顶层形态（也兼容 digest evidence）
         return evidence.main(rest)
     if group == "digest":

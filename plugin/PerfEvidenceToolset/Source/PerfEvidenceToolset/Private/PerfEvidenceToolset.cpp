@@ -89,6 +89,53 @@ FString UPerfEvidenceToolset::PerfEvidenceLines(const FString& RunDir, const FSt
 	return Payload;
 }
 
+FString UPerfEvidenceToolset::PerfAnalyzeLatest(const FString& ProjectPath, const FString& Views,
+	bool bWithB2)
+{
+	const FString Repo = TEXT("D:/dsh-output/ue-perf-evidence");
+	const FString Script = Repo / TEXT("perfctl.py");
+	const FString UseViews = Views.IsEmpty() ? TEXT("cpu,bound") : Views;
+	FString Args = FString::Printf(TEXT("-X utf8 \"%s\" auto --project \"%s\" --views \"%s\""),
+		*Script, *ProjectPath, *UseViews);
+	if (bWithB2)
+	{
+		Args += TEXT(" --b2");
+	}
+	int32 ReturnCode = 1;
+	FString StdOut, StdErr;
+	if (!FPlatformProcess::ExecProcess(TEXT("python"), *Args, &ReturnCode, &StdOut, &StdErr))
+	{
+		return TEXT("err: python launch failed (is python on PATH?)");
+	}
+	// perfctl auto 会把 summary.md 路径打在最后一行；这里直接把摘要内容返回给 agent
+	FString SummaryPath;
+	TArray<FString> Lines;
+	StdOut.ParseIntoArrayLines(Lines, true);
+	for (const FString& Line : Lines)
+	{
+		if (Line.StartsWith(TEXT("[ok] ")))
+		{
+			SummaryPath = Line.RightChop(5).TrimStartAndEnd();
+		}
+	}
+	if (SummaryPath.IsEmpty() || !FPaths::FileExists(SummaryPath))
+	{
+		return FString::Printf(TEXT("err: analysis failed (rc=%d)\n%s\n%s"), ReturnCode,
+			*StdOut.Left(1200), *StdErr.Left(600));
+	}
+	FString Summary;
+	if (!FFileHelper::LoadFileToString(Summary, *SummaryPath))
+	{
+		return FString::Printf(TEXT("err: cannot read %s"), *SummaryPath);
+	}
+	const int32 MaxChars = 16000;
+	if (Summary.Len() > MaxChars)
+	{
+		Summary = Summary.Left(MaxChars) + FString::Printf(TEXT("\n…（截断：完整内容见 %s）"), *SummaryPath);
+	}
+	return Summary;
+}
+
 class FPerfEvidenceToolsetModule : public IModuleInterface
 {
 	void StartupModule()

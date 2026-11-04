@@ -54,4 +54,18 @@ public:
 	 */
 	UFUNCTION(meta = (AICallable), Category = "PerfEvidence")
 	static FString PerfEvidenceLines(const FString& RunDir, const FString& Ref, int32 Page, int32 Limit);
+
+	/**
+	 * Analyses the newest .utrace under the project's Saved/Profiling (or any directory you pass),
+	 * without opening it: it ingests the trace into a run directory, builds the manifest, runs the
+	 * requested digests and returns the combined summary text.
+	 *
+	 * Use this when the user says things like "分析最新的 utrace" / "看看刚才录的这帧".
+	 * @param ProjectPath .uproject file, project directory, or its Saved directory.
+	 * @param Views Comma separated: cpu,bound,gpu,config,hitch,memory,allocs,load,sampler (default "cpu,bound").
+	 * @param bWithB2 Also run B2 (GPU queue lines, ~60s extra when not cached).
+	 * @return The summary markdown (truncated to ~16KB) or an error description.
+	 */
+	UFUNCTION(meta = (AICallable), Category = "PerfEvidence")
+	static FString PerfAnalyzeLatest(const FString& ProjectPath, const FString& Views, bool bWithB2);
 };

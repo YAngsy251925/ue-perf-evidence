@@ -24,6 +24,22 @@ UE 5.8 上、面向 AI agent 的**性能证据管线**：从一次采集（trace
 | 那条结论的原始行在哪 | `perfctl evidence <run> --ref "timer:Name@stats｜frame:N｜hitch:K"` | 分页证据行（带翻页提示） |
 | 引擎自报 vs 我们推导 | `perfctl digest bound <run> --sampler` | 采样器校准段（GT/RT/GPU 偏差） |
 
+## 零摩擦：分析"最新那条 utrace"（推荐日常用法）
+
+录完 trace 什么都不用打开，直接：
+
+```bash
+python perfctl.py auto --project C:/UEProject/LyraStarterGame      # 找最新 .utrace → ingest → cpu+bound → 摘要
+python perfctl.py auto --project … --views cpu,bound,gpu,config --b2   # 多跑几个视图（--b2 才有 GPU 线）
+```
+
+它自动在 `<Project>/Saved/Profiling/**` 里挑 mtime 最新、且已写完（默认 ≥10 秒前）的 `.utrace`，
+顺手匹配时间最接近的 `Saved/Logs/*.log`，然后：ingest → manifest → 跑视图 → 写
+`runs/auto-<trace 时间戳>/auto/summary.md`。`--json` 会多打一行 `PERF_AUTO_JSON {...}` 给 agent 解析。
+
+在编辑器里（AI Assistant / MCP）等价工具是 **`PerfAnalyzeLatest(ProjectPath, Views, bWithB2)`**，
+它直接把摘要文本返回给 agent —— 用户只要说"帮我分析最新的 utrace"。
+
 ## 快速开始
 
 采集有三条通路，任选一条（详见 [docs/PLAN.md](docs/PLAN.md) §3）：
