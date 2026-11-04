@@ -5,6 +5,7 @@ import io
 import json
 import os
 import tempfile
+import re
 import unittest
 
 from pipeline.extract import b2
@@ -148,9 +149,11 @@ class CommandLineTest(unittest.TestCase):
         self.assertIn("end 2.500000", line)
         self.assertIn("thread GameThread", line)
         self.assertIn("-nullrhi", line)
-        # 自定义 key 不能用 key=value 形态（cmd 会拆开）
-        for token in ("mode=", "out=", "limit=", "start=", "end=", "thread="):
-            self.assertNotIn(token, line)
+        # 自定义 key 不能用 key=value 形态（cmd 会拆开）。
+        # 注意用"前面不是 '-' 或字母"的边界判断：引擎自己的开关（如 -traceautostart=0）里也含 "start="。
+        for token in ("mode", "out", "limit", "start", "end", "thread"):
+            self.assertIsNone(re.search(r"(?<![-\w])%s=" % token, line),
+                              "custom arg %s must use space form" % token)
 
     def test_timer_arg_is_quoted(self):
         line = b2.build_cmdline("callers", "D:/t/trace.utrace", "D:/o/c.json", "D:/o/c.log",

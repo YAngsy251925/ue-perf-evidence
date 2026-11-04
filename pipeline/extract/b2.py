@@ -56,8 +56,11 @@ def build_cmdline(mode, trace, out_path, log_path, limit=0, start=None, end=None
     if frame is not None:
         # 键名是 frameindex：token 扫描会先把 "mode frame" 里的 frame 命中掉
         parts += ["frameindex", str(int(frame))]
+    # -traceautostart=0：不加这个，commandlet 启动时引擎会**把自己也录一份**到
+    # %LOCALAPPDATA%/UnrealEngine/Common/UnrealTrace/Store（实测每跑一次 b2 就多一条 ~1.5MB trace，
+    # 还会污染 perfctl auto 的"最新 trace"发现）。
     parts += ["-unattended", "-nosplash", "-nullrhi", "-nosound", "-stdout",
-              '-ABSLOG="%s"' % log_path]
+              "-traceautostart=0", '-ABSLOG="%s"' % log_path]
     return " ".join(parts)
 
 

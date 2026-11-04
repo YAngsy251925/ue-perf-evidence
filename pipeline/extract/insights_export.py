@@ -56,6 +56,7 @@ def run_insights(trace: str, outdir: str, commands, ue_root=None, timeout=1800) 
         f'-OpenTraceFile="{trace}"',
         "-AutoQuit",
         "-NoUI",
+        "-traceautostart=0",   # 别让 UnrealInsights 把自己录进 store
         f"-ExecOnAnalysisCompleteCmd=@={rsp}",
         f'-ABSLOG="{log_path}"',
         "-log",

@@ -177,7 +177,8 @@ def _pick_stable(paths, min_age_s, now, check_stable, settle_s):
     return (None, None)
 
 
-def find_latest(dirs, min_age_s=10.0, now=None, check_stable=True, settle_s=0.4):
+def find_latest(dirs, min_age_s=10.0, now=None, check_stable=True, settle_s=0.4,
+                min_size_mb=0.0):
     """返回 (path, mtime) 或 (None, None)。
 
     两个"还在录"的判据：
@@ -187,6 +188,11 @@ def find_latest(dirs, min_age_s=10.0, now=None, check_stable=True, settle_s=0.4)
     """
     now = time.time() if now is None else now
     traces = _all_traces(dirs)
+    if min_size_mb:
+        # 我们自己分析时的自录（-traceautostart 未关时产生）只有 1~2MB，用大小门槛挡掉；
+        # 真实录制（编辑器/游戏）通常几十 MB 起。--min-size-mb 0 可关掉这条过滤。
+        floor = float(min_size_mb) * 1024 * 1024
+        traces = [p for p in traces if os.path.getsize(p) >= floor]
     if not traces:
         return (None, None)
     path, mtime = _pick_stable(traces, min_age_s, now, check_stable, settle_s)
@@ -390,6 +396,8 @@ def main(argv=None) -> int:
     ap.add_argument("--views", default=",".join(DEFAULT_VIEWS),
                     help="要跑的视图，逗号分隔（cpu,bound,gpu,config,hitch,memory,allocs,load,sampler）")
     ap.add_argument("--min-age", type=float, default=10.0, help="mtime 小于该秒数的 trace 视为还在写，跳过")
+    ap.add_argument("--min-size-mb", type=float, default=5.0,
+                    help="小于该大小的 trace 跳过（默认 5MB：挡掉分析进程的自录；0 = 不过滤）")
     ap.add_argument("--run-root", default=os.path.join(REPO, "runs"), help="run 目录放哪")
     ap.add_argument("--b2", action="store_true", help="bound/gpu/load 连 B2（慢，但 GPU 线才有数）")
     ap.add_argument("--target-fps", type=float, default=None)
@@ -425,7 +433,7 @@ def main(argv=None) -> int:
         if not dirs:
             print("[error] 找不到搜索目录：给 --project <.uproject|工程目录> 或 --dir <目录>")
             return 2
-        trace, trace_mtime = find_latest(dirs, a.min_age)
+        trace, trace_mtime = find_latest(dirs, a.min_age, min_size_mb=a.min_size_mb)
         if not trace:
             print("[error] 在 %s 里没找到 %s 秒前写过的 .utrace（刚录完的等一会儿再试，或用 --min-age 0）"
                   % ("、".join(dirs), int(a.min_age)))
