@@ -217,7 +217,89 @@ def _find_digest(run_dir, kind, extra_roots=()):
     return None
 
 
-def analyze(run_dir, catalog, budget_ms=None, digest_roots=()):
+def detect_memory(memory, catalog, process_physical_mb=None):
+    """内存侧：某个 STATGROUP 吃掉大部分物理内存 / 峰值远高于当值 / 清单被截断。"""
+    if not memory or not (memory.get("group_totals_mb") or memory.get("stats_top")):
+        return []
+    out = []
+    groups = memory.get("group_totals_mb") or {}
+    total = sum(groups.values()) or 0.0
+    top_name, top_mb = next(iter(groups.items()), (None, 0.0)) if groups else (None, 0.0)
+    share = (top_mb / total) if total else 0.0
+    if top_name and share >= 0.35:
+        out.append({
+            "id": "memory_group_dominant:%s" % top_name.lower(),
+            "kind": "investigate_memory_group",
+            "subject": "%s 占内存 %.0f%%" % (top_name, 100 * share),
+            "evidence": {"group": top_name, "group_mb": round(top_mb, 1),
+                         "share_of_groups_pct": round(100 * share, 1),
+                         "process_physical_mb": process_physical_mb,
+                         "source": "memory.json group_totals_mb"},
+            "expected_saving_ms": None,
+            "levers": levers_for(catalog, ("r.Streaming", "r.Mip", "r.TextureStreaming",
+                                           "gc.", "s.LevelStreaming"), limit=4),
+            "verification": "改一个上面的 cvar 后采 A/B，比较 memory.json 的 process_physical_mb "
+                            "与帧时间（内存下降但帧时间不变 → 只是省内存，不是省帧）",
+            "invalidation": "若该 group 的大小由内容本身决定（贴图/网格资产），调 cvar 不会降，假设证伪",
+        })
+    phys = (memory.get("platform") or {}).get("process_physical_mb") or {}
+    used, peak = phys.get("used"), phys.get("peak")
+    if used and peak and peak > used * 1.5:
+        out.append({
+            "id": "memory_peak_gap",
+            "kind": "investigate_transient_peak",
+            "subject": "进程物理内存峰值远高于当值（%.0f vs %.0f MB）" % (peak, used),
+            "evidence": {"used_mb": used, "peak_mb": peak,
+                         "ratio": round(peak / used, 2), "source": "memory.json platform"},
+            "expected_saving_ms": None,
+            "levers": levers_for(catalog, ("gc.", "r.Streaming", "s.AsyncLoadingThreadEnabled"), limit=3),
+            "verification": "在 hitch 视图对齐峰值发生的时间点；若峰值与 hitch 同期，是加载/PGC 抖动",
+            "invalidation": "若峰值发生在启动/切换关卡（一次性），它不影响稳态帧，假设证伪",
+        })
+    return out
+
+
+def detect_load(load, catalog):
+    """加载侧：单个加载项吃掉大部分加载时间 / 缺通道导致无法归因。"""
+    if not load:
+        return []
+    out = []
+    pkgs = load.get("packages") or []
+    if pkgs:
+        total = sum(p.get("total_ms") or 0.0 for p in pkgs) or 0.0
+        top = pkgs[0]
+        share = (top.get("total_ms") or 0.0) / total if total else 0.0
+        if share >= 0.20:
+            out.append({
+                "id": "load_top_entry:%s" % str(top.get("name"))[:24].lower().replace(" ", "_"),
+                "kind": "investigate_load_entry",
+                "subject": "加载 Top1：%s" % str(top.get("name"))[:48],
+                "evidence": {"total_ms": top.get("total_ms"), "share_pct": round(100 * share, 1),
+                             "count": top.get("count"), "max_ms": top.get("max_ms"),
+                             "requests": load.get("request_rows"),
+                             "source": "load.json packages"},
+                "expected_saving_ms": None,
+                "levers": levers_for(catalog, ("s.AsyncLoadingThreadEnabled", "s.MinBulkDataSizeForAsyncLoading",
+                                               "s.PriorityAsyncLoadingExtraTime", "r.Streaming"), limit=4),
+                "verification": "perfctl digest load <run> --out DIR --b2 复看该条目；"
+                                "调异步加载参数后 A/B 比较加载总时长（不是帧时间）",
+                "invalidation": "若该条目是一次性 LevelStreaming（只在切关卡时发生），对稳态帧无影响，假设证伪",
+            })
+    if load.get("request_rows") == 0:
+        out.append({
+            "id": "load_missing_channel",
+            "kind": "data_gap",
+            "subject": "trace 里没有 LoadTime 事件",
+            "evidence": {"request_rows": 0, "file_activity_rows": load.get("file_activity_rows")},
+            "expected_saving_ms": None,
+            "levers": [],
+            "verification": "确认 profile 的 trace.channels 含 loadtime（我们已自动启用分析模块）",
+            "invalidation": "若 trace 确实没采该通道，这不是优化点而是采集缺口",
+        })
+    return out
+
+
+def analyze(run_dir, catalog, budget_ms=None, digest_roots=(), ledger_data=None):
     """读 run 目录（或给定目录）里的 digest，产出假设列表 + 口径说明。"""
     def load(kind):
         path = _find_digest(run_dir, kind, digest_roots)
@@ -227,6 +309,7 @@ def analyze(run_dir, catalog, budget_ms=None, digest_roots=()):
             return json.load(f)
 
     cpu, bound, gpu = load("cpu"), load("bound"), load("gpu")
+    memory, loadview = load("memory"), load("load")
     manifest_path = os.path.join(run_dir, "manifest.json")
     manifest = {}
     if os.path.isfile(manifest_path):
@@ -245,6 +328,13 @@ def analyze(run_dir, catalog, budget_ms=None, digest_roots=()):
     hyp += detect_bound(bound, interval_p50, catalog)
     hyp += detect_gpu_effects(gpu, catalog, graphics_busy)
     hyp += detect_cpu_hotspots(cpu, interval_p50 or 0.0, catalog)
+    hyp += detect_memory(memory, catalog, ((memory or {}).get("platform") or {}).get(
+        "process_physical_mb", {}).get("used"))
+    hyp += detect_load(loadview, catalog)
+
+    if ledger_data:
+        from pipeline.advice import ledger as ledger_mod
+        hyp = ledger_mod.apply_calibration(hyp, ledger_data)
 
     return {
         "schema": "perf-advice/0",
@@ -295,6 +385,56 @@ def render_md(result):
 def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):  # PLAN 7.4 E4
         stream.reconfigure(encoding="utf-8", errors="replace")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    from pipeline.advice import ledger as ledger_mod
+    if argv[:1] == ["record"]:
+        # perfctl advise record --hypothesis ID --diff DIR [--predicted lo,hi] [--ledger PATH]
+        ap2 = argparse.ArgumentParser(description="把一次 A/B 验证写进建议账本")
+        ap2.add_argument("--hypothesis", required=True)
+        ap2.add_argument("--diff", required=True, help="perfctl diff 的输出目录（含 perf_diff.json）")
+        ap2.add_argument("--predicted", default=None, help="预测区间 lo,hi（ms/帧）；不给则从该 run 的 advice.json 找")
+        ap2.add_argument("--ledger", default="advice/ledger.json")
+        ap2.add_argument("--engine-version", default=None)
+        ap2.add_argument("--scene", default=None)
+        a2 = ap2.parse_args(argv[1:])
+        predicted = None
+        if a2.predicted:
+            lo, _, hi = a2.predicted.partition(",")
+            predicted = [float(lo), float(hi or lo)]
+        elif a2.diff:
+            for name in ("advice.json",):
+                path = os.path.join(a2.diff, name)
+                if os.path.isfile(path):
+                    with io.open(path, encoding="utf-8") as f:
+                        for h in (json.load(f).get("hypotheses") or []):
+                            if h.get("id") == a2.hypothesis:
+                                predicted = h.get("expected_saving_ms")
+                                break
+        entry = ledger_mod.record_from_diff(a2.ledger, a2.hypothesis, a2.diff, predicted,
+                                            a2.engine_version, a2.scene)
+        print("[ledger] %s 实测 Δ=%s ms，判定 %s（共 %d 条记录）"
+              % (a2.hypothesis, entry["measured_ms"], entry["verdict"],
+                 len(ledger_mod.load(a2.ledger)["entries"])))
+        cal = ledger_mod.calibration(ledger_mod.load(a2.ledger), a2.hypothesis)
+        print("  校准：样本 %d，实测中位 %s ms，预测中点 %s ms，因子 ×%s%s"
+              % (cal["samples"], cal["measured_median_ms"], cal["predicted_mid_ms"], cal["factor"],
+                 "，已降级" if cal["retired"] else ""))
+        return 0
+    if argv[:1] == ["ledger"]:
+        ap3 = argparse.ArgumentParser(description="查看建议账本")
+        ap3.add_argument("--ledger", default="advice/ledger.json")
+        ap3.add_argument("--out", default=None, help="同时写一份 md")
+        a3 = ap3.parse_args(argv[1:])
+        data = ledger_mod.load(a3.ledger)
+        md = ledger_mod.render_md(data)
+        print(md)
+        if a3.out:
+            os.makedirs(a3.out, exist_ok=True)
+            with io.open(os.path.join(a3.out, "ledger.md"), "w", encoding="utf-8", newline="\n") as f:
+                f.write(md + "\n")
+            print("[ok] %s" % os.path.join(os.path.abspath(a3.out), "ledger.md"))
+        return 0
+
     ap = argparse.ArgumentParser(description="从 digest 证据生成可证伪的优化假设")
     ap.add_argument("run_dir")
     ap.add_argument("--out", required=True)
@@ -302,6 +442,7 @@ def main(argv=None) -> int:
     ap.add_argument("--budget-ms", type=float, default=None, help="目标帧预算（例如 1000/60）")
     ap.add_argument("--digest-dir", action="append", default=[],
                     help="额外搜索 digest 的目录（可重复；默认既看 run 目录也看其父目录）")
+    ap.add_argument("--ledger", default=None, help="建议账本（给出后会用历史校准预期收益）")
     a = ap.parse_args(argv)
 
     run_dir = os.path.abspath(a.run_dir)
@@ -309,7 +450,11 @@ def main(argv=None) -> int:
         print("[error] run dir not found: %s" % run_dir)
         return 1
     catalog = load_catalog(a.catalog)
-    result = analyze(run_dir, catalog, a.budget_ms, tuple(a.digest_dir))
+    ledger_data = None
+    if a.ledger:
+        from pipeline.advice import ledger as ledger_mod
+        ledger_data = ledger_mod.load(a.ledger)
+    result = analyze(run_dir, catalog, a.budget_ms, tuple(a.digest_dir), ledger_data)
     os.makedirs(a.out, exist_ok=True)
     with io.open(os.path.join(a.out, "advice.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(result, f, ensure_ascii=False, indent=1)

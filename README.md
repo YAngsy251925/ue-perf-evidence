@@ -25,6 +25,38 @@ UE 5.8 上、面向 AI agent 的**性能证据管线**：从一次采集（trace
 | 那条结论的原始行在哪 | `perfctl evidence <run> --ref "timer:Name@stats｜frame:N｜hitch:K"` | 分页证据行（带翻页提示） |
 | 引擎自报 vs 我们推导 | `perfctl digest bound <run> --sampler` | 采样器校准段（GT/RT/GPU 偏差） |
 
+## 两种使用方式
+
+### 方式 A：对着 agent 说人话（推荐）
+
+不用记命令。你只要把 trace 录好（编辑器里按 Insights 的 Trace，或跑打包好的包），然后说：
+
+| 你说 | agent 会做 |
+|---|---|
+| 「帮我分析最新的 utrace」 | `perfctl auto --project <工程>` → 自动找最新 trace → ingest → manifest → cpu+bound → 一句结论 |
+| 「分析 20261105_012713」 | `perfctl ingest --trace <该文件> --run runs/x` → 同上的视图 |
+| 「这个 run 在哪儿优化」 | `perfctl advise runs/x --ledger advice/ledger.json` → 假设清单（含 cvar / 预期收益 / 证伪条件） |
+| 「A 比 B 快了吗」 | `perfctl diff cpu -a A1..A5 -b B1..B5 --significance-only --fail-on regression` |
+| 「这条结论的原始行在哪」 | `perfctl evidence runs/x --ref "timer:Name@stats"` |
+
+agent 侧对应工具（编辑器里的 AI Assistant / MCP）：`PerfAnalyzeLatest` / `PerfRunReport` / `PerfEvidenceLines`。
+
+**唯一需要你确认的场景**：录的时候得在 PIE 里跑起来的（否则 trace 里没有帧，只能答"这段时间 CPU 花在哪"）。
+
+### 方式 B：命令行
+
+| 想做什么 | 命令 |
+|---|---|
+| 一次采集（我们驱动引擎） | `perfctl capture harness/profiles/measure.json runs/r1 [--uproject P | --exe Game.exe]` |
+| 接住已录好的 trace | `perfctl ingest --trace F --run DIR [--log L] [--mode pie|packaged]` |
+| 自动分析最新 | `perfctl auto --project P [--views cpu,bound] [--b2] [--explain]` |
+| 结论 | `perfctl digest cpu|bound|gpu|hitch|memory|allocs|load|config …` |
+| 优化建议 | `perfctl advise <run> --out DIR --ledger advice/ledger.json` |
+| 建议账本 | `perfctl advise ledger`、`perfctl advise record --hypothesis ID --diff DIR` |
+| 对比 / CI 闸门 | `perfctl diff cpu -a … -b … --significance-only --fail-on regression --json-line` |
+| 下钻证据 | `perfctl evidence <run> --ref "timer:Name@stats"` |
+| 成本核算 | `python tools/session_cost.py` |
+
 ## 零摩擦：分析"最新那条 utrace"（推荐日常用法）
 
 录完 trace 什么都不用打开，直接：

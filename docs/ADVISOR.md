@@ -59,6 +59,10 @@
 | `cpu_ui_dominant` | UI 相关自耗时 ≥30% | 先确认是否"在编辑器里 PIE"（编辑器 Slate 不该算游戏帧） |
 | `cpu_single_hotspot` | 单个 timer ≥15% | 直接给 `b2 callers` 下钻命令 |
 | `cpu_dispersion` | Top1 <15% | 提示做前缀聚合 + 逐次分布，区分"广度"与"抖动" |
+| `memory_group_dominant:*` | 单个 STATGROUP ≥35% 内存总量 | 查该 group 的流送/池化 cvar（`r.Streaming.*`、`gc.*`） |
+| `memory_peak_gap` | 峰值 > 当值 1.5 倍 | 峰值与 hitch 对齐，判断是否加载/PGC 抖动 |
+| `load_top_entry:*` | 单个加载条目 ≥20% 加载总时长 | 异步加载参数 + 该条目是否一次性 |
+| `load_missing_channel` | trace 里没有 LoadTime 事件 | 采集缺口（不是优化点），提示补 `loadtime` 通道 |
 
 新增检测器 = 新增一种"数据形态 → 假设"的映射，**不需要动配置或知识库**。
 
@@ -93,6 +97,29 @@ python tools/scan_cvars.py --ue-root <UE> --prefix r.Lumen --prefix r.Bloom ... 
 2. **版本差异**：把两个引擎版本的 `catalog/cvars.json` 做 diff，新增在热区附近的开关就是新杠杆候选；
 3. **跨 run 对比**：同一场景 A/B 之外，再做"同一套 cvar 在不同内容上的效果"，
    找出"这条建议只在这类内容成立"的边界条件。
+
+## 4.5 账本自动回写（M9.2）
+
+预测与实测的对账不再靠人肉记，命令只有一条：
+
+```bash
+# 1) 用建议里的 cvar 改一处，采 A/B 各 5 次，跑 R9 判定
+perfctl capture harness/profiles/measure.json runs/B --map /Game/Map
+perfctl diff cpu -a runs/A1 … -a runs/A5 -b runs/B1 … -b runs/B5         --significance-only --out runs/diff_ab --fail-on regression --json-line
+
+# 2) 把结果写进账本（预测值自动从该 run 的 advice.json 里取）
+perfctl advise record --hypothesis gpu_effect_share:bloom --diff runs/diff_ab         --ledger advice/ledger.json --scene "Lyra L_Expanse"
+
+# 3) 看账本（含校准因子与降级状态）
+perfctl advise ledger --ledger advice/ledger.json
+```
+
+回写后自动生效的两件事：
+
+1. **校准因子**：同一假设 ≥2 个样本时，`因子 = 实测中位 ÷ 预测中点`；下次 `advise --ledger advice/ledger.json`
+   生成的 `expected_saving_ms` 会乘以该因子（原文保留在 `expected_saving_ms_raw`）。
+2. **降级淘汰**：连续 3 次 `within_noise` → 该假设标记 `retired`，不再默认出现在建议里
+   （但账本里留痕，可以人工复查是不是场景不适用）。
 
 ## 5. 验证成本（很重要）
 
