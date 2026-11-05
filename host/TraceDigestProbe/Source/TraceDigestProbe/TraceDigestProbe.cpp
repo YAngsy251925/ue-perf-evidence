@@ -23,6 +23,7 @@
 #include "TraceServices/Model/AllocationsProvider.h"
 #include "TraceServices/Model/NetProfiler.h"
 #include "TraceServices/Model/LoadTimeProfiler.h"
+#include "SlateProvider.h"   // SlateInsights 插件的 FSlateProvider（Private 头，Build.cs 里加了 include path）
 #include "TraceServices/Containers/Tables.h"
 #include "Misc/FileHelper.h"
 #endif
@@ -39,7 +40,7 @@ static void EnableAnalysisModules()
 	if (!Modules.IsValid()) { Modules = SvcModule.CreateModuleService(); }
 	if (!Modules.IsValid()) { return; }
 	for (const TCHAR* Name : { TEXT("TraceModule_LoadTimeProfiler"), TEXT("TraceModule_Tasks"),
-							   TEXT("TraceModule_CookProfiler") })
+							   TEXT("TraceModule_CookProfiler"), TEXT("TraceModule_Slate") })
 	{
 		Modules->SetModuleEnabled(FName(Name), true);
 	}
@@ -567,6 +568,7 @@ static struct FPerfEvidenceSamplerInit
 	}
 } GPerfEvidenceSamplerInit;
 #endif // !UE_BUILD_SHIPPING
+
 
 // ---------------------------------------------------------------- M6.3 LoadTime 探针
 // 用 Core 的**公开**宏在 trace 里造一条真实的 LoadTime 事件（RequestGroup）。
@@ -1786,6 +1788,108 @@ static void EmitFrameTree(const TraceServices::IAnalysisSession& Session, FOutpu
 		Index, ScopeCount, StatNamed, SumSelf * 1000.0);
 }
 
+
+// widgets：Slate 逐控件成本（M10.2）。
+// 数据来自引擎原生的 SlateTrace 通道（SlateChannel），经 SlateInsights 插件的 FSlateProvider 读取：
+//   WidgetInfo      → WidgetId + Path（FReflectionMetaData::GetWidgetPath）+ DebugInfo
+//   WidgetUpdated   → 每次更新的耗时（Duration）、受影响控件数、更新标志
+//   WidgetInvalidated → 失效原因（EInvalidateWidgetReason）
+// 所以这个模式能回答"哪个控件贵、为什么重绘"，是 pass 级（Slate::Prepass）之下的那一层。
+// 前提：采集时 trace 通道里要含 slate（见 harness/profiles/slate_probe.json）。
+static void EmitWidgets(const TraceServices::IAnalysisSession& Session, FOutputDevice& Ar,
+	const FString& TracePath, const FString& OutPath, double WindowStart, double WindowEnd, int32 Limit)
+{
+	using UE::SlateInsights::FSlateProvider;
+	// 用字面量而不是 FSlateProvider::ProviderName：插件模块没有导出这个静态成员（会 LNK2001），
+	// 而 SlateProvider.cpp 里它的值就是 "SlateProvider"。
+	const FSlateProvider* Slate = Session.ReadProvider<FSlateProvider>(FName(TEXT("SlateProvider")));
+	if (!Slate)
+	{
+		Ar.Logf(TEXT("PERF_ERR no Slate provider (trace 里没有 SlateTrace 事件；采集时给 -trace=...slate)"));
+		return;
+	}
+	if (WindowEnd <= 0.0) { WindowEnd = Session.GetDurationSeconds(); }
+	const double Span = FMath::Max(1e-9, WindowEnd - WindowStart);
+
+	struct FStat { int64 Count = 0; double Total = 0.0; double Max = 0.0; int32 Affected = 0; };
+	TMap<uint64, FStat> Stats;
+	uint64 WidgetIdValue = 0;
+	uint64 EventCount = 0;
+
+	const FSlateProvider::FWidgetUpdatedTimeline& Updated = Slate->GetWidgetUpdatedTimeline();
+	Updated.EnumerateEvents(WindowStart, WindowEnd,
+		[&Stats, &EventCount, &WidgetIdValue](bool bStart, double /*Time*/,
+			const UE::SlateInsights::Message::FWidgetUpdatedMessage& Msg) -> TraceServices::EEventEnumerate
+		{
+			if (!bStart) { return TraceServices::EEventEnumerate::Continue; }
+			++EventCount;
+			WidgetIdValue = Msg.WidgetId.GetValue();   // FWidgetId 强类型，GetValue() 取内部 id
+			FStat& Slot = Stats.FindOrAdd(WidgetIdValue);
+			Slot.Count += 1;
+			Slot.Total += FMath::Max(0.0, Msg.Duration);
+			Slot.Max = FMath::Max(Slot.Max, Msg.Duration);
+			Slot.Affected = FMath::Max(Slot.Affected, Msg.AffectedCount);
+			return TraceServices::EEventEnumerate::Continue;
+		});
+
+	TArray<TPair<uint64, FStat>> Rows;
+	for (const TPair<uint64, FStat>& Pair : Stats) { Rows.Add(Pair); }
+	Rows.Sort([](const TPair<uint64, FStat>& A, const TPair<uint64, FStat>& B)
+	{
+		return A.Value.Total > B.Value.Total;
+	});
+
+	// 失效原因计数：回答"为什么重绘"（控件级）
+	TMap<uint8, int32> InvalidateReasons;
+	const FSlateProvider::FWidgetInvalidatedTimeline& Invalidated = Slate->GetWidgetInvalidatedTimeline();
+	Invalidated.EnumerateEvents(WindowStart, WindowEnd,
+		[&InvalidateReasons](bool bStart, double /*Time*/,
+			const UE::SlateInsights::Message::FWidgetInvalidatedMessage& Msg) -> TraceServices::EEventEnumerate
+		{
+			if (!bStart) { return TraceServices::EEventEnumerate::Continue; }
+			const uint8 Reason = (uint8)Msg.InvalidationReason;
+			InvalidateReasons.FindOrAdd(Reason) += 1;
+			return TraceServices::EEventEnumerate::Continue;
+		});
+
+	FString Out = FString::Printf(
+		TEXT("{\"schema\":\"perf-b2-widgets/0\",\"trace\":\"%s\",\"window\":[%.6f,%.6f],")
+		TEXT("\"span_s\":%.6f,\"update_events\":%llu,\"widget_count\":%d,\"widgets\":["),
+		*JsonEscape(*TracePath), WindowStart, WindowEnd, Span,
+		(unsigned long long)EventCount, Rows.Num());
+
+	int32 Emitted = 0;
+	for (const TPair<uint64, FStat>& Pair : Rows)
+	{
+		if (Limit > 0 && Emitted >= Limit) { break; }
+		const UE::SlateInsights::Message::FWidgetId LookupId(Pair.Key);
+		const UE::SlateInsights::Message::FWidgetInfo* Info = Slate->FindWidget(LookupId);
+		const FString Path = Info ? Info->Path : FString();
+		const FString Debug = (Info && !Info->DebugInfo.IsEmpty()) ? Info->DebugInfo : FString();
+		if (Emitted > 0) { Out += TEXT(","); }
+		Out += FString::Printf(
+			TEXT("{\"widget_id\":%llu,\"path\":\"%s\",\"debug\":\"%s\",\"updates\":%lld,")
+			TEXT("\"total_ms\":%.4f,\"max_ms\":%.4f,\"avg_ms\":%.4f,\"share_pct\":%.3f,\"affected_max\":%d}"),
+			(unsigned long long)Pair.Key, *JsonEscape(*Path), *JsonEscape(*Debug),
+			Pair.Value.Count, Pair.Value.Total * 1000.0, Pair.Value.Max * 1000.0,
+			Pair.Value.Count > 0 ? Pair.Value.Total * 1000.0 / Pair.Value.Count : 0.0,
+			Span > 0.0 ? 100.0 * Pair.Value.Total / Span : 0.0, Pair.Value.Affected);
+		++Emitted;
+	}
+	Out += FString::Printf(TEXT("],\"invalidation_reasons\":{"));
+	int32 ReasonIdx = 0;
+	for (const TPair<uint8, int32>& Pair : InvalidateReasons)
+	{
+		Out += FString::Printf(TEXT("%s\"%u\":%d"), ReasonIdx++ > 0 ? TEXT(",") : TEXT(""),
+			(unsigned)Pair.Key, Pair.Value);
+	}
+	Out += TEXT("}}");
+	WriteJson(Ar, OutPath, Out);
+	Ar.Logf(TEXT("PERF_WIDGETS updates=%llu widgets=%d top=%s"),
+		(unsigned long long)EventCount, Rows.Num(),
+		Rows.Num() > 0 ? TEXT("(see json)") : TEXT("none"));
+}
+
 // load：资源加载的请求表（M6.3）。
 // 注意：provider 只在 trace 里真有 LoadTime/PlatformFile 事件时才存在（TraceServices 按 logger 激活模块），
 // 所以 Lyra 前端这种"没有异步加载"的 run 上 ReadLoadTimeProfilerProvider 会返回 null —— 这时明确报错，
@@ -2021,6 +2125,12 @@ void RunTraceDigestPerf(const FString& Params, FOutputDevice& Ar)
 	if (Mode == TEXT("frame"))
 	{
 		EmitFrameTree(*Session, Ar, TracePath, OutPath, FrameIndex, ThreadName, Limit);
+		Ar.Logf(TEXT("PERF_DONE"));
+		return;
+	}
+	if (Mode == TEXT("widgets"))
+	{
+		EmitWidgets(*Session, Ar, TracePath, OutPath, WindowStart, WindowEnd, Limit);
 		Ar.Logf(TEXT("PERF_DONE"));
 		return;
 	}

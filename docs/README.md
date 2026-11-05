@@ -2,6 +2,7 @@
 
 | 文件 | 说明 | 是否入库 |
 |---|---|---|
+| `UI.md` | UI 成本的逐控件分析（Slate 通道 + UMG 结构导出） | 是 |
 | `ADVISOR.md` | 优化建议层的方法论（证据锚定 / 杠杆目录 / 账本校准） | 是 |
 | `COST.md` | 一次分析的 token 成本实测与复测方法 | 是 |
 | `ci/perf-gate.yml` | CI 闸门 workflow 模板（复制到 `.github/workflows/` 生效） | 是 |

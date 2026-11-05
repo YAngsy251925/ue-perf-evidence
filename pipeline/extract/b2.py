@@ -27,7 +27,7 @@ HOST_DIR = os.path.join(REPO, "host", "TraceDigestProbe")
 DEFAULT_UE_ROOT = r"D:\Epic\Games\UE_5.8"
 
 
-MODES = ("frames", "frame", "timers", "timerstats", "callers", "calls", "gpu", "counters", "regions",
+MODES = ("frames", "frame", "timers", "timerstats", "callers", "calls", "widgets", "gpu", "counters", "regions",
          "logs", "channels", "tasks", "memory", "allocations", "net", "load")
 
 
@@ -246,6 +246,13 @@ def main(argv=None) -> int:
                 return 3
         elif checks is None:
             print("[b2] 旁边没有 manifest，跳过对账")
+    elif a.mode == "widgets":
+        print("[b2] widgets: 更新事件 %s，控件 %s 个（Slate 通道）"
+              % (payload.get("update_events"), payload.get("widget_count")))
+        for w in (payload.get("widgets") or [])[:8]:
+            print("   %-56s %8.3f ms  %5.2f%%  updates=%s"
+                  % ((w.get("path") or w.get("debug") or "?")[:56], w.get("total_ms") or 0.0,
+                     w.get("share_pct") or 0.0, w.get("updates")))
     elif a.mode == "calls":
         print("[b2] calls: timer=%s 窗口 %s 内命中 %s 次（收集 %s，合计 %.3fms，最长 %.3fms）"
               % (payload.get("timer"), payload.get("window"), payload.get("matched"),

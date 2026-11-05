@@ -19,6 +19,7 @@ UE 5.8 上、面向 AI agent 的**性能证据管线**：从一次采集（trace
 | 是不是配置问题 | `perfctl digest config <run> --out DIR` | cvar（双证据源）+ scalability + 声明对账 |
 | **在哪儿优化、预期多少** | `perfctl advise <run> --out DIR` | 证据驱动的假设：份额/饱和/fence + 本机引擎 cvar（含 file:line）+ 预期收益 + 证伪条件 |
 | 变快了还是变慢了 | `perfctl diff cpu -a … -b … --out DIR [--fail-on regression]` | R9：n / CV / 阈值 / MDE / 退出码 |
+| **哪个 UI 控件贵、为什么重绘** | `perfctl b2 widgets <trace> --out DIR`（需带 `slate` 通道）+ 编辑器里跑 `tools/dump_umg.py` | 逐控件耗时 + 控件树/绑定/节点结构，见 [docs/UI.md](docs/UI.md) |
 | **某个特效/函数花了多少** | `perfctl find <run> --name <子串> [--regex] [--b2] [--full]` | 在几万个 timer 名里定位该 scope，给出 self / 次数 / 占窗口，并给下一步下钻命令 |
 | 那条结论的原始行在哪 | `perfctl evidence <run> --ref "timer:Name@stats｜frame:N｜hitch:K"` | 分页证据行（带翻页提示） |
 | 引擎自报 vs 我们推导 | `perfctl digest bound <run> --sampler` | 采样器校准段（GT/RT/GPU 偏差） |

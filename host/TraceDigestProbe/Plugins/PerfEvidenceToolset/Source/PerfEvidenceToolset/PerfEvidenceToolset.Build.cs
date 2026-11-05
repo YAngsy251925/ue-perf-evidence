@@ -15,6 +15,11 @@ public class PerfEvidenceToolset : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"ToolsetRegistry",
+				// UMG/Blueprint 结构导出（PerfEvidenceUILibrary）需要这些编辑器模块
+				"UMG",
+				"UMGEditor",
+				"UnrealEd",
+				"AssetRegistry",
 			}
 			);
 	}
