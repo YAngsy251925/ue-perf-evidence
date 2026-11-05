@@ -15,6 +15,7 @@
   python perfctl.py digest memory <run_dir> --out DIR [--top N]                    # 内存视图（M6.1，MemReport）
   python perfctl.py digest allocs <run_dir|csv> --out DIR [--rule aAf] [--top N]    # 分配视图（M6.2，A 路 ExportAllocs）
   python perfctl.py digest load <run_dir> --out DIR [--b2] [--top N]                # 加载视图（M6.3，包级 Top-N）
+  python perfctl.py find <run_dir|trace> --name <子串> [--regex] [--b2]        # 按名字找 scope（特效/函数/子系统）
   python perfctl.py advise <run_dir> --out DIR [--catalog catalog/cvars.json] [--budget-ms 16.67]  # 证据驱动的优化假设
   python perfctl.py evidence <run_dir> --ref "timer:Name@stats|frame:N|hitch:K" --out DIR [--page N] [--limit N]  # 原始证据行（perf_evidence）
   python perfctl.py digest hitch  <run_dir> --out DIR                            # hitch 视图（M2.3/M2.4）
@@ -35,6 +36,7 @@ import os
 import sys
 
 from pipeline.advice import advisor
+from pipeline.digest.views import find as find_view
 from pipeline.capture import auto, capture, ingest, profile, session
 from pipeline.caliber import manifest
 from pipeline.digest import diff, run_digest
@@ -54,6 +56,8 @@ def main(argv=None) -> int:
     group, rest = argv[0], argv[1:]
     if group == "export":
         return insights_export.main(rest)
+    if group == "find":
+        return find_view.main(rest)
     if group == "advise":
         return advisor.main(rest)
     if group == "ingest":
